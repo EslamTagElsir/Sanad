@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+stage2_hybrid/store/
+stage2_hybrid/store_large/
+data/users.json

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "kb_kyc_verification",
+    "title": "التحقق من الهوية (KYC) لتفعيل الحساب",
+    "language": "ar",
+    "team": "accounts",
+    "updated": "2026-06-01",
+    "text": "لتفعيل الحساب بالكامل، يجب على العميل رفع صورة بطاقة الرقم القومي (الوجه والظهر) وصورة سيلفي عبر التطبيق. تتم المراجعة خلال 24 ساعة عمل. الحسابات غير الموثقة (KYC غير مكتمل) محدودة بسقف تحويل يومي 5,000 جنيه وسقف شهري 20,000 جنيه. بعد اكتمال التوثيق يرتفع السقف اليومي إلى 60,000 جنيه والشهري إلى 300,000 جنيه. إذا رُفض التوثيق، يظهر السبب داخل التطبيق تحت 'حالة التوثيق' ويمكن إعادة الرفع فورًا."
+  },
+  {
+    "id": "kb_transaction_limits",
+    "title": "Transaction and Transfer Limits",
+    "language": "en",
+    "team": "accounts",
+    "updated": "2026-05-14",
+    "text": "Unverified (KYC-pending) accounts are capped at EGP 5,000 per day and EGP 20,000 per month. Fully verified accounts are capped at EGP 60,000 per day and EGP 300,000 per month. Business accounts have a separate limit of EGP 500,000 per month, set at onboarding. Limits reset at midnight Cairo time. A customer who hits their limit will see 'Transfer limit exceeded' in-app; the fix is either waiting for reset or completing KYC verification for a higher cap."
+  },
+  {
+    "id": "kb_failed_transfer",
+    "title": "فشل التحويل ولم يتم خصم أو رد المبلغ",
+    "language": "ar",
+    "team": "payments",
+    "updated": "2026-07-02",
+    "text": "عند فشل تحويل والمبلغ ما زال مخصومًا من الرصيد، السبب الغالب هو تأخر تأكيد الشبكة من جهة المستلم. في 90% من الحالات يُرد المبلغ تلقائيًا خلال ساعتين. إذا تجاوز الأمر 4 ساعات، افتح تذكرة استرجاع أموال (Reversal) مرفقًا بها رقم العملية (Transaction ID)، وتُحل خلال يومي عمل. لا يُطلب من العميل التواصل مع المستلم؛ الاسترجاع من طرفنا مباشرة."
+  },
+  {
+    "id": "kb_refund_policy",
+    "title": "Refund and Reversal Policy",
+    "language": "en",
+    "team": "payments",
+    "updated": "2026-04-20",
+    "text": "Refunds for failed or disputed transactions are processed to the original wallet within 2 business days once a reversal ticket is opened with the transaction ID. Refunds are never issued in cash at agent locations. If a customer sent money to the wrong recipient by mistake (correct transaction, wrong number), we cannot force a refund — the agent should advise contacting the recipient directly; the platform cannot reverse a successfully completed transfer to the correct account holder."
+  },
+  {
+    "id": "kb_account_freeze",
+    "title": "تجميد الحساب لأسباب أمنية",
+    "language": "ar",
+    "team": "security",
+    "updated": "2026-08-10",
+    "text": "يُجمَّد الحساب تلقائيًا عند رصد نشاط غير معتاد (محاولات دخول متكررة فاشلة، أو تحويلات كبيرة غير معتادة خلال وقت قصير). لإلغاء التجميد يجب على العميل الاتصال بخط الأمان المخصص (وليس الدعم العادي) لتأكيد الهوية عبر سؤالين أمنيين ثم كود يُرسل على الرقم المسجل. مدة إلغاء التجميد من 15 دقيقة إلى ساعة بعد التحقق. لا يحق لموظف الدعم العادي إلغاء التجميد يدويًا مهما كانت الحالة مستعجلة."
+  },
+  {
+    "id": "kb_otp_issues",
+    "title": "مشاكل عدم وصول كود التحقق (OTP)",
+    "language": "ar",
+    "team": "technical",
+    "updated": "2026-07-25",
+    "text": "إذا لم يصل كود OTP خلال دقيقتين: 1) تأكد أن الرقم المسجل يستقبل رسائل SMS وليس محظورًا لرسائل الشركات. 2) جرّب زر 'إعادة الإرسال' بعد انتهاء العداد (90 ثانية). 3) إذا تكرر الفشل 3 مرات، يتحول الخيار تلقائيًا لمكالمة صوتية بالكود. أعطال الشبكة لدى مشغلي الاتصالات (فودافون، اتصالات، أورانج، وي) قد تؤخر الوصول حتى 10 دقائق في أوقات الذروة، وهذا خارج نطاق تحكمنا."
+  },
+  {
+    "id": "kb_card_linking",
+    "title": "Linking or Removing a Bank Card",
+    "language": "en",
+    "team": "technical",
+    "updated": "2026-03-11",
+    "text": "Customers can link up to 3 debit/credit cards per wallet from Settings > Linked Cards. Card linking requires a successful EGP 1 verification charge, refunded automatically within minutes. If linking fails repeatedly, the most common cause is the card's bank blocking online/international verification — advise the customer to enable 'online payments' with their card issuer. To remove a card, no verification is required; removal is instant and does not affect past transaction history."
+  },
+  {
+    "id": "kb_fees_pricing",
+    "title": "الرسوم والعمولات",
+    "language": "ar",
+    "team": "billing",
+    "updated": "2026-06-18",
+    "text": "التحويل بين محافظ نفس الشركة مجاني بالكامل بدون حد أقصى. التحويل لحساب بنكي عمولته 1% بحد أدنى 5 جنيه وحد أقصى 50 جنيه. السحب من الوكلاء (Cash-out) عمولته 1.5% بحد أدنى 3 جنيه. الإيداع (Cash-in) من الوكلاء مجاني. لا توجد رسوم شهرية أو رسوم صيانة حساب من أي نوع."
+  },
+  {
+    "id": "kb_agent_cashout",
+    "title": "Cash-out at Agent Locations",
+    "language": "en",
+    "team": "operations",
+    "updated": "2026-05-30",
+    "text": "To cash out at any agent, the customer generates a one-time withdrawal code in-app (valid for 10 minutes) and shows it with their national ID to the agent. Agents cannot process cash-out without this code, even with ID alone, as a fraud-prevention measure. If the code expires before reaching the agent, the customer simply generates a new one at no cost — expired codes do not deduct any balance."
+  },
+  {
+    "id": "kb_dispute_process",
+    "title": "عملية النزاع على معاملة (Dispute)",
+    "language": "ar",
+    "team": "payments",
+    "updated": "2026-07-15",
+    "text": "إذا ادّعى العميل عدم معرفته بمعاملة ظهرت على حسابه، يُفتح نزاع (Dispute) ويُجمَّد مبلغ المعاملة المتنازع عليه احتياطيًا لحين التحقيق (حتى 10 أيام عمل). يُطلب من العميل تعبئة نموذج نزاع داخل التطبيق يوضح تفاصيل عدم المعرفة بالمعاملة. النتيجة تصل عبر إشعار داخل التطبيق وليس عبر تحديث تذكرة الدعم."
+  },
+  {
+    "id": "kb_account_closure",
+    "title": "Closing an Account",
+    "language": "en",
+    "team": "accounts",
+    "updated": "2026-02-22",
+    "text": "An account can only be closed with a zero balance. If a balance remains, the customer must first withdraw or transfer it out — the platform does not issue closure refunds by bank transfer directly. Closure requests are submitted via a support ticket (not self-service in-app) and take up to 5 business days. A closed account's phone number is released for new registration after 90 days."
+  },
+  {
+    "id": "kb_business_account",
+    "title": "حسابات الأعمال (Business Accounts)",
+    "language": "ar",
+    "team": "accounts",
+    "updated": "2026-06-05",
+    "text": "حساب الأعمال يتطلب سجلًا تجاريًا ساري وبطاقة ضريبية باسم النشاط. مدة المراجعة من 2 إلى 3 أيام عمل. عمولة استقبال المدفوعات لحساب الأعمال 0.5% لكل معاملة واردة، أقل من عمولة التحويل البنكي العادية. لا يمكن تحويل حساب أفراد قائم إلى حساب أعمال؛ يجب فتح حساب جديد منفصل."
+  }
+]

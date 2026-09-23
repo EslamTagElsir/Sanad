@@ -1,0 +1,98 @@
+[
+  {
+    "id": "ticket_1042",
+    "language": "ar",
+    "team": "payments",
+    "customer_message": "حولت 500 جنيه لصاحبي بس اتخصمت مني والفلوس مش واصلاه لحد دلوقتي، عدى عليها 5 ساعات",
+    "resolution": "تم التحقق من رقم العملية، واتضح أن الشبكة كانت متأخرة في تأكيد الاستلام من طرف المستقبل. فتحنا تذكرة استرجاع أموال (Reversal) وتم رد المبلغ لمحفظة العميل خلال ساعة من فتح التذكرة، لأن مدة الـ 4 ساعات كانت قد انقضت بالفعل.",
+    "tags": ["failed_transfer", "reversal"]
+  },
+  {
+    "id": "ticket_1055",
+    "language": "en",
+    "team": "accounts",
+    "customer_message": "I uploaded my ID twice for KYC and it keeps getting rejected, no reason shown, this is frustrating",
+    "resolution": "Checked the KYC review queue directly — the rejection reason was a blurry photo on the ID back side, but the in-app reason label was empty due to a display bug for that specific rejection code. Manually confirmed the reason to the customer and asked for a clearer photo with better lighting; approved within the hour after resubmission. Flagged the empty-reason display bug to engineering.",
+    "tags": ["kyc", "bug_workaround"]
+  },
+  {
+    "id": "ticket_1071",
+    "language": "ar",
+    "team": "security",
+    "customer_message": "حسابي اتجمد فجأة وأنا محتاجه ضروري دلوقتي، ليه حصل كده وأعمل ايه؟",
+    "resolution": "تم تحويل العميل فورًا لخط الأمان المخصص لأن فريق الدعم العادي لا يملك صلاحية إلغاء التجميد. أوضحنا أن السبب على الأغلب محاولات دخول فاشلة متكررة ظهرت في السجل، وأن التحقق عبر خط الأمان يستغرق أقل من ساعة بعد الإجابة عن الأسئلة الأمنية.",
+    "tags": ["account_freeze", "escalation_required"]
+  },
+  {
+    "id": "ticket_1088",
+    "language": "en",
+    "team": "payments",
+    "customer_message": "I sent 2000 EGP to the wrong number by mistake, can you get it back for me please, it's a lot of money",
+    "resolution": "Explained clearly that since the transaction completed successfully to a valid, correct account holder, the platform has no technical or policy mechanism to force a reversal — this is not a failed transaction. Advised the customer to contact the recipient directly and, if unresponsive, that this falls outside what support can resolve. Customer was upset but understood after we confirmed the transaction was fully valid on the recipient's end.",
+    "tags": ["refund", "wrong_recipient", "no_action_possible"]
+  },
+  {
+    "id": "ticket_1103",
+    "language": "ar",
+    "team": "technical",
+    "customer_message": "مش عارف اربط الفيزا بتاعتي، بيديني error كل شوية",
+    "resolution": "طلبنا اسم البنك المصدر للبطاقة، واتضح أنه أحد البنوك المعروفة بحظر معاملات التحقق الدولية افتراضيًا. أرشدنا العميل للاتصال بالبنك لتفعيل 'الدفع الإلكتروني/أونلاين' على الفيزا، ونجح الربط بعد ذلك مباشرة بدون أي تدخل من جانبنا.",
+    "tags": ["card_linking", "bank_block"]
+  },
+  {
+    "id": "ticket_1114",
+    "language": "en",
+    "team": "billing",
+    "customer_message": "why was I charged 50 EGP for a bank transfer of only 500 EGP? that seems like way more than 1%",
+    "resolution": "Confirmed the fee is correct: 1% of 500 EGP would be 5 EGP, but the minimum fee floor is 5 EGP and maximum cap is 50 EGP — this particular transfer was actually a larger prior transaction the customer had forgotten about (5,000 EGP, where 1% = 50 EGP, hitting the cap). Walked the customer through their transaction history to show the correct amount; no billing error existed.",
+    "tags": ["fees", "billing_clarification"]
+  },
+  {
+    "id": "ticket_1129",
+    "language": "ar",
+    "team": "operations",
+    "customer_message": "كود السحب من الوكيل خلص عليا وأنا لسه واقف قدام الوكيل، هعمل ايه؟",
+    "resolution": "طمأنّا العميل أن الكود المنتهي لا يخصم أي مبلغ، وأنه يمكنه ببساطة توليد كود جديد من نفس الشاشة فورًا ومجانًا، ثم إظهاره للوكيل. تم حل المشكلة خلال دقيقة واحدة دون أي إجراء إضافي.",
+    "tags": ["agent_cashout", "code_expired"]
+  },
+  {
+    "id": "ticket_1140",
+    "language": "en",
+    "team": "technical",
+    "customer_message": "not receiving the OTP code at all, tried resend 3 times already, I'm stuck",
+    "resolution": "After 3 failed SMS attempts the system should auto-offer a voice call OTP option, but the customer said they didn't see it. Had them fully close and reopen the app (not just background it) — the voice-call option then appeared correctly and the call OTP worked immediately. Likely a stale app-state issue rather than a real delivery problem.",
+    "tags": ["otp", "app_refresh_fix"]
+  },
+  {
+    "id": "ticket_1156",
+    "language": "ar",
+    "team": "accounts",
+    "customer_message": "عايز اقفل حسابي خالص، فيه فلوس فيه لسه اعمل ايه؟",
+    "resolution": "أوضحنا أن غلق الحساب يتطلب رصيد صفر أولًا، فطلبنا من العميل تحويل الرصيد المتبقي لحساب آخر أو سحبه بالكامل من وكيل، ثم فتحنا تذكرة غلق حساب رسمية بعد تصفير الرصيد، وأبلغناه أن الإجراء يستغرق حتى 5 أيام عمل.",
+    "tags": ["account_closure", "balance_withdrawal"]
+  },
+  {
+    "id": "ticket_1163",
+    "language": "en",
+    "team": "accounts",
+    "customer_message": "can I upgrade my personal account to a business account? I run a small shop",
+    "resolution": "Clarified that an existing personal account cannot be converted directly — a separate business account must be opened from scratch, requiring a valid commercial registration and tax card in the business name. Sent the customer the business onboarding link and set expectations for the 2-3 business day review window.",
+    "tags": ["business_account", "no_upgrade_path"]
+  },
+  {
+    "id": "ticket_1177",
+    "language": "ar",
+    "team": "payments",
+    "customer_message": "فيه معاملة في حسابي مش أنا اللي عملتها، سحب 800 جنيه، مش فاهم حصل ازاي",
+    "resolution": "فتحنا نزاع (Dispute) فورًا وتم تجميد مبلغ المعاملة احتياطيًا لحين التحقيق، وطلبنا من العميل تعبئة نموذج النزاع داخل التطبيق بالتفاصيل. أوضحنا أن النتيجة ستصل كإشعار داخل التطبيق خلال حتى 10 أيام عمل، وليس عبر تحديث على التذكرة نفسها.",
+    "tags": ["dispute", "unauthorized_transaction"]
+  },
+  {
+    "id": "ticket_1190",
+    "language": "en",
+    "team": "accounts",
+    "customer_message": "my daily transfer limit is way too low, I keep hitting it, can you raise it manually?",
+    "resolution": "Explained that support cannot manually override limits — the only path to a higher cap (from 5,000/day to 60,000/day) is completing full KYC verification if not already done. Checked the account and found KYC was actually still pending from 3 days ago; escalated the KYC review directly to unblock it faster than the normal queue.",
+    "tags": ["transaction_limits", "kyc"]
+  }
+]

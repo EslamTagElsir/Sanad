@@ -1,0 +1,19 @@
+# بيئة تعليمية تعمل محليًا بالكامل بدون اتصال بمزوّدي embedding/vector DB
+# خارجيين (راجع offline_embeddings.py). لمشروع حقيقي أضف بدلًا منها:
+#   qdrant-client أو psycopg[binary] (pgvector) حسب المسار المختار
+#   نموذج embedding متعدد اللغات حقيقي (Qwen3-Embedding عبر vLLM، أو Gemini/Voyage)
+
+rank-bm25
+numpy
+scikit-learn
+anthropic
+huggingface_hub  # بديل مجاني اختياري للتوليد عبر HF_API_TOKEN — راجع common.get_hf_client
+openai  # عميل OpenRouter (واجهة متوافقة) عبر OPENROUTER_API_KEY — راجع common.get_openrouter_client
+python-dotenv  # تحميل مفاتيح .env تلقائيًا — راجع common.py
+pyjwt  # تسجيل دخول حقيقي (JWT) — راجع stage4_production/auth.py
+bcrypt  # تجزئة كلمات المرور
+sendgrid  # إرسال الرد فعليًا بالإيميل للعميل — راجع stage4_production/email_service.py
+fastapi
+uvicorn[standard]
+httpx
+pytest

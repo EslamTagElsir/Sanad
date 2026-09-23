@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>الدعم الفني</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Cairo',system-ui,sans-serif;background:#F7F7F5;color:#20241F;min-height:100vh;display:flex;flex-direction:column;}
+  header{padding:22px 24px 16px;border-bottom:1px solid #E5E5E0;background:#FFFFFF;}
+  header .eyebrow{font-size:13px;color:#9A9D95;} header .title{font-size:17px;font-weight:700;margin-top:2px;}
+  main{flex-grow:1;padding:32px 24px;display:flex;flex-direction:column;max-width:440px;width:100%;margin:0 auto;}
+  h1{font-size:20px;font-weight:700;margin:0 0 8px;}
+  .sub{font-size:14px;color:#6B6F68;line-height:1.6;margin-bottom:24px;}
+  label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;}
+  input,textarea{width:100%;box-sizing:border-box;padding:14px 16px;border-radius:14px;border:1px solid #E5E5E0;background:#FFFFFF;font-family:'Cairo',sans-serif;font-size:14px;margin-bottom:16px;}
+  textarea{min-height:150px;resize:none;line-height:1.7;}
+  input:focus,textarea:focus,button:focus-visible{outline:2px solid #0F3D3E;outline-offset:2px;}
+  button{width:100%;padding:15px;border-radius:14px;border:none;background:#0F3D3E;color:#fff;font-family:'Cairo',sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:background .15s ease,opacity .15s ease;}
+  button:hover{background:#0B2E2F;} button:disabled{opacity:.6;cursor:not-allowed;}
+  .note{font-size:12px;color:#9A9D95;text-align:center;margin-top:12px;line-height:1.6;}
+  .error{color:#C0392B;font-size:13px;margin:-6px 0 14px;}
+  #confirmation{flex-grow:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:16px;}
+  .check-circle{width:64px;height:64px;border-radius:50%;background:#EAF2F1;display:flex;align-items:center;justify-content:center;}
+  .ticket-chip{padding:6px 16px;border-radius:20px;background:#fff;border:1px solid #E5E5E0;font-size:13px;color:#6B6F68;}
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">محفظتك الرقمية</div>
+  <div class="title">الدعم الفني</div>
+</header>
+
+<main>
+  <form id="ticketForm">
+    <h1>إزاي نقدر نساعدك؟</h1>
+    <p class="sub">اكتب مشكلتك أو سؤالك، وهيراجعها أحد موظفي الدعم ويردّ عليك بالإيميل.</p>
+
+    <label for="email">بريدك الإلكتروني</label>
+    <input id="email" type="email" required placeholder="you@example.com">
+
+    <label for="message">رسالتك</label>
+    <textarea id="message" required placeholder="مثال: حولت فلوس وفشل التحويل والمبلغ لسه متخصم من حسابي"></textarea>
+
+    <div id="formError" class="error" hidden></div>
+    <button type="submit" id="submitBtn">إرسال الرسالة</button>
+    <div class="note">هيتم مراجعة رسالتك بمعرفة موظف دعم بشري قبل الرد عليك</div>
+  </form>
+
+  <div id="confirmation" hidden>
+    <div class="check-circle">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0F3D3E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    </div>
+    <div style="font-size:19px;font-weight:700;">تم استلام رسالتك</div>
+    <span class="ticket-chip" id="ticketIdChip"></span>
+    <div style="font-size:14px;color:#6B6F68;line-height:1.7;max-width:280px;">هيتواصل معاك فريق الدعم على بريدك الإلكتروني في أقرب وقت ممكن.</div>
+    <button style="width:auto;padding:12px 24px;background:#fff;border:1px solid #0F3D3E;color:#0F3D3E;" id="resetBtn">إرسال رسالة تانية</button>
+  </div>
+</main>
+
+<script>
+document.getElementById('ticketForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const message = document.getElementById('message').value.trim();
+  const errBox = document.getElementById('formError');
+  const btn = document.getElementById('submitBtn');
+  errBox.hidden = true;
+  btn.disabled = true;
+  btn.textContent = '...جاري الإرسال';
+  try {
+    const resp = await fetch('/submit-ticket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_message: message, customer_email: email })
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      errBox.textContent = body.detail || 'حصل خطأ، حاول تاني';
+      errBox.hidden = false;
+      return;
+    }
+    const ticket = await resp.json();
+    document.getElementById('ticketIdChip').textContent = 'رقم التذكرة #' + ticket.ticket_id;
+    document.getElementById('ticketForm').hidden = true;
+    document.getElementById('confirmation').hidden = false;
+  } catch (err) {
+    errBox.textContent = 'تعذّر الاتصال بالخادم';
+    errBox.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'إرسال الرسالة';
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  document.getElementById('ticketForm').reset();
+  document.getElementById('ticketForm').hidden = false;
+  document.getElementById('confirmation').hidden = true;
+});
+</script>
+</body>
+</html>

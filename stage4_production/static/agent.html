@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent-Assist Copilot — لوحة الموظف</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --ink:#20241F; --muted:#6B6F68; --faint:#9A9D95; --line:#E5E5E0;
+    --bg:#F7F7F5; --card:#FFFFFF; --brand:#0F3D3E; --brand-tint:#EAF2F1;
+    --ok-bg:#E8F5E9; --ok-fg:#2E7D32; --ok-bd:#A5D6A7;
+    --warn-bg:#FFF8E1; --warn-fg:#A66A00; --warn-bd:#FFD54F;
+    --bad-bg:#FDECEA; --bad-fg:#C0392B; --bad-bd:#F1948A;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Cairo',system-ui,sans-serif;background:var(--bg);color:var(--ink);}
+  button{font-family:inherit;cursor:pointer;transition:background .15s ease,border-color .15s ease,opacity .15s ease;}
+  button:disabled{opacity:.55;cursor:not-allowed;}
+  input,select,textarea{font-family:inherit;}
+  textarea:focus,select:focus,input:focus,button:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+  ::-webkit-scrollbar{width:8px} ::-webkit-scrollbar-thumb{background:#D6D6D0;border-radius:8px}
+  [hidden]{display:none !important;}
+
+  .btn{padding:11px 22px;border-radius:10px;border:none;font-size:14px;font-weight:700;display:inline-flex;align-items:center;gap:8px;}
+  .btn-primary{background:var(--brand);color:#fff;} .btn-primary:hover{background:#0B2E2F;}
+  .btn-send{background:#2E7D32;color:#fff;} .btn-send:hover{background:#256428;}
+  .btn-outline-danger{background:#fff;border:1px solid var(--bad-fg);color:var(--bad-fg);}
+  .btn-outline-danger:hover{background:var(--bad-bg);}
+  .btn-ghost{background:#fff;border:1px solid var(--line);color:var(--ink);font-weight:600;}
+  .btn-ghost:hover{background:#F0F0EC;}
+
+  /* شاشة تسجيل الدخول */
+  #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .login-card{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:36px 32px;box-shadow:0 1px 3px rgba(20,24,19,.06);}
+  .login-logo{width:40px;height:40px;border-radius:10px;background:var(--brand);margin-bottom:18px;display:flex;align-items:center;justify-content:center;}
+  .login-card h1{font-size:19px;margin:0 0 4px;} .login-card p{font-size:13px;color:var(--muted);margin:0 0 24px;}
+  .field{margin-bottom:16px;} .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;}
+  .field input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;font-size:14px;}
+  #loginError{color:var(--bad-fg);font-size:13px;margin:-6px 0 14px;min-height:1em;}
+
+  /* لوحة القيادة */
+  #dashboard{display:flex;flex-direction:column;height:100vh;}
+  header{height:64px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 28px;background:var(--card);border-bottom:1px solid var(--line);}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:16px;}
+  .brand .mark{width:32px;height:32px;border-radius:9px;background:var(--brand);}
+  .who{display:flex;align-items:center;gap:12px;font-size:13px;}
+  .avatar{width:28px;height:28px;border-radius:50%;background:var(--brand-tint);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;}
+
+  .body{flex-grow:1;display:flex;overflow:hidden;}
+  .sidebar{width:340px;flex-shrink:0;border-inline-end:1px solid var(--line);background:var(--card);padding:18px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
+  .sidebar-head{display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:700;}
+  .count-pill{font-size:12px;font-weight:700;color:var(--brand);background:var(--brand-tint);padding:2px 9px;border-radius:10px;}
+  select.select{width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--line);background:#fff;font-size:13px;}
+  #ticketList{display:flex;flex-direction:column;gap:10px;}
+  .ticket-card{padding:14px;border-radius:10px;cursor:pointer;border:1px solid var(--line);background:#fff;display:flex;flex-direction:column;gap:8px;}
+  .ticket-card:hover{border-color:var(--brand);}
+  .ticket-card.selected{border-color:var(--brand);background:var(--brand-tint);}
+  .ticket-msg{font-size:13px;line-height:1.5;color:#3A3D37;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+  .ticket-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--faint);}
+  .empty-state{padding:28px 8px;display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--faint);text-align:center;font-size:13px;}
+
+  main{flex-grow:1;padding:32px 40px;overflow-y:auto;}
+  .panel{max-width:760px;display:flex;flex-direction:column;gap:22px;}
+  .msg-card{padding:18px 20px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:15px;line-height:1.7;}
+  .label{font-size:12px;font-weight:600;color:var(--faint);margin-bottom:8px;}
+  .badge{padding:7px 16px;border-radius:20px;font-size:13px;font-weight:700;border:1px solid transparent;}
+  .meter{width:220px;height:6px;border-radius:4px;background:#E9E9E4;overflow:hidden;} .meter > div{height:100%;border-radius:4px;}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;font-size:13px;}
+  .chip-kb{background:var(--brand);color:#fff;} .chip-ticket{background:#fff;border:1px solid #ccc;color:#555;}
+  textarea.draft{width:100%;min-height:160px;padding:16px;border-radius:12px;border:1px solid var(--line);background:#fff;font-size:14px;line-height:1.8;resize:vertical;}
+  .row{display:flex;gap:12px;align-items:center;}
+  .toast{padding:12px 16px;border-radius:10px;font-size:13px;}
+  .toast-ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-bd);}
+  .toast-warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-bd);}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;animation:sp .7s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <form class="login-card" id="loginForm">
+    <div class="login-logo"></div>
+    <h1>Agent-Assist Copilot</h1>
+    <p>سجّل الدخول بحساب الموظف الخاص بك</p>
+    <div class="field">
+      <label for="username">اسم المستخدم</label>
+      <input id="username" name="username" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label for="password">كلمة المرور</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <div id="loginError"></div>
+    <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;" id="loginBtn">تسجيل الدخول</button>
+  </form>
+</div>
+
+<div id="dashboard" hidden>
+  <header>
+    <div class="brand"><div class="mark"></div>Agent-Assist Copilot</div>
+    <div class="who">
+      <span class="avatar" id="avatarInitial"></span>
+      <span id="displayName"></span>
+      <button class="btn-ghost btn" id="logoutBtn" style="padding:7px 14px;">تسجيل خروج</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="sidebar-head"><span>التذاكر المعلّقة</span><span class="count-pill" id="ticketCount">0</span></div>
+      <div id="ticketList"></div>
+      <div id="sidebarEmpty" class="empty-state" hidden>لا توجد تذاكر معلّقة</div>
+    </aside>
+
+    <main>
+      <div id="noSelection" class="empty-state" style="height:100%;justify-content:center;display:flex;">اختر تذكرة من القائمة لعرضها</div>
+
+      <div id="ticketPanel" class="panel" hidden>
+        <div class="msg-card"><span class="label" style="display:block;">رسالة العميل</span><span id="panelMessage"></span></div>
+
+        <div class="row">
+          <button class="btn btn-primary" id="generateBtn">توليد مسودة</button>
+        </div>
+
+        <div id="draftError" class="toast toast-warn" hidden></div>
+
+        <div id="draftResult" hidden style="display:flex;flex-direction:column;gap:18px;">
+          <div>
+            <div class="row"><span class="badge" id="actionBadge"></span><span id="confidenceText" style="font-size:13px;color:var(--muted);"></span></div>
+            <div class="meter" style="margin-top:8px;"><div id="meterFill"></div></div>
+          </div>
+          <div id="citationsRow" class="row" style="flex-wrap:wrap;"></div>
+          <div>
+            <div class="label">مسودة الرد (قابلة للتعديل قبل الإرسال)</div>
+            <textarea class="draft" id="draftText"></textarea>
+          </div>
+          <div id="resolveResult"></div>
+          <div class="row">
+            <button class="btn btn-send" id="sendBtn">إرسال للعميل بالإيميل</button>
+            <button class="btn btn-outline-danger" id="escalateBtn">تصعيد الحالة</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+const TOKEN_KEY = 'agentassist_token';
+const NAME_KEY = 'agentassist_name';
+let tickets = [];
+let selectedTicket = null;
+
+function authHeaders(extra) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return Object.assign({ 'Authorization': 'Bearer ' + token }, extra || {});
+}
+
+async function api(path, options) {
+  const resp = await fetch(path, options);
+  if (resp.status === 401) {
+    logout();
+    throw new Error('انتهت الجلسة، سجّل الدخول تاني');
+  }
+  return resp;
+}
+
+function showDashboard() {
+  document.getElementById('loginScreen').hidden = true;
+  document.getElementById('dashboard').hidden = false;
+  const name = localStorage.getItem(NAME_KEY) || '';
+  document.getElementById('displayName').textContent = name;
+  document.getElementById('avatarInitial').textContent = name.trim().slice(0, 1) || '؟';
+  loadTickets();
+}
+
+function logout() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(NAME_KEY);
+  document.getElementById('dashboard').hidden = true;
+  document.getElementById('loginScreen').hidden = false;
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errBox = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+  errBox.textContent = '';
+  btn.disabled = true;
+  btn.textContent = '...جاري الدخول';
+  try {
+    const resp = await fetch('/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      errBox.textContent = body.detail || 'فشل تسجيل الدخول';
+      return;
+    }
+    const body = await resp.json();
+    localStorage.setItem(TOKEN_KEY, body.access_token);
+    localStorage.setItem(NAME_KEY, body.display_name);
+    showDashboard();
+  } catch (err) {
+    errBox.textContent = 'تعذّر الاتصال بالخادم';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'تسجيل الدخول';
+  }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', logout);
+
+async function loadTickets() {
+  const resp = await api('/tickets?status=pending', { headers: authHeaders() });
+  tickets = await resp.json();
+  renderTicketList();
+}
+
+
+function renderTicketList() {
+  const list = document.getElementById('ticketList');
+  const visible = tickets;
+  document.getElementById('ticketCount').textContent = visible.length;
+  list.innerHTML = '';
+  document.getElementById('sidebarEmpty').hidden = visible.length > 0;
+
+  visible.forEach((t) => {
+    const div = document.createElement('div');
+    div.className = 'ticket-card' + (selectedTicket && selectedTicket.ticket_id === t.ticket_id ? ' selected' : '');
+    const time = new Date(t.created_at * 1000).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    div.innerHTML =
+      '<div class="ticket-meta"><span class="ticket-email"></span><span class="ticket-time"></span></div>' +
+      '<div class="ticket-msg"></div>';
+    // كل حقول التذكرة مصدرها العميل (نقطة عامة) → textContent فقط، لا innerHTML.
+    div.querySelector('.ticket-email').textContent = t.customer_email || 'بدون إيميل';
+    div.querySelector('.ticket-time').textContent = time;
+    div.querySelector('.ticket-msg').textContent = t.customer_message;
+    div.addEventListener('click', () => selectTicket(t));
+    list.appendChild(div);
+  });
+}
+
+function selectTicket(t) {
+  selectedTicket = t;
+  renderTicketList();
+  document.getElementById('noSelection').hidden = true;
+  document.getElementById('ticketPanel').hidden = false;
+  document.getElementById('panelMessage').textContent = t.customer_message;
+  document.getElementById('draftResult').hidden = true;
+  document.getElementById('draftError').hidden = true;
+  document.getElementById('resolveResult').innerHTML = '';
+  document.getElementById('generateBtn').hidden = false;
+  document.getElementById('generateBtn').disabled = false;
+  document.getElementById('generateBtn').textContent = 'توليد مسودة';
+}
+
+const ACTION_STYLES = {
+  send_ready: { label: 'جاهز للإرسال', bg: 'var(--ok-bg)', fg: 'var(--ok-fg)', bd: 'var(--ok-bd)' },
+  needs_review: { label: 'يحتاج مراجعة', bg: 'var(--warn-bg)', fg: 'var(--warn-fg)', bd: 'var(--warn-bd)' },
+  escalate: { label: 'تصعيد', bg: 'var(--bad-bg)', fg: 'var(--bad-fg)', bd: 'var(--bad-bd)' }
+};
+
+document.getElementById('generateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('generateBtn');
+  document.getElementById('draftError').hidden = true;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> جاري التوليد...';
+  try {
+    const resp = await api('/draft', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ customer_message: selectedTicket.customer_message })
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      document.getElementById('draftError').textContent = body.detail || 'فشل توليد المسودة';
+      document.getElementById('draftError').hidden = false;
+      return;
+    }
+    const draft = await resp.json();
+    renderDraft(draft);
+    btn.hidden = true;
+  } catch (err) {
+    document.getElementById('draftError').textContent = err.message;
+    document.getElementById('draftError').hidden = false;
+  } finally {
+    btn.disabled = false;
+    if (!btn.hidden) btn.textContent = 'توليد مسودة';
+  }
+});
+
+function renderDraft(draft) {
+  const meta = ACTION_STYLES[draft.action] || ACTION_STYLES.needs_review;
+  const badge = document.getElementById('actionBadge');
+  badge.textContent = meta.label;
+  badge.style.background = meta.bg; badge.style.color = meta.fg; badge.style.borderColor = meta.bd;
+  document.getElementById('confidenceText').textContent = 'نسبة الثقة: ' + Math.round(draft.confidence * 100) + '%';
+  const fill = document.getElementById('meterFill');
+  fill.style.width = Math.round(draft.confidence * 100) + '%';
+  fill.style.background = meta.fg;
+
+  const citationsRow = document.getElementById('citationsRow');
+  citationsRow.innerHTML = '';
+  if (draft.citations.length === 0) {
+    const span = document.createElement('span');
+    span.style.cssText = 'font-size:13px;color:var(--faint);';
+    span.textContent = 'لا يوجد مصدر مناسب في قاعدة المعرفة';
+    citationsRow.appendChild(span);
+  }
+  draft.citations.forEach((c) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip ' + (c.source_type === 'kb' ? 'chip-kb' : 'chip-ticket');
+    chip.textContent = c.title + (c.source_type === 'kb' ? ' · مصدر رسمي' : ' · سابقة');
+    citationsRow.appendChild(chip);
+  });
+
+  document.getElementById('draftText').value = draft.draft;
+  document.getElementById('draftResult').hidden = false;
+}
+
+function showResult(box, kind, text) {
+  box.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'toast ' + (kind === 'ok' ? 'toast-ok' : 'toast-warn');
+  div.textContent = text;
+  box.appendChild(div);
+}
+
+async function resolve(resolution) {
+  const sendBtn = document.getElementById('sendBtn');
+  const escBtn = document.getElementById('escalateBtn');
+  sendBtn.disabled = true; escBtn.disabled = true;
+  const resultBox = document.getElementById('resolveResult');
+  resultBox.innerHTML = '';
+  try {
+    const resp = await api('/tickets/' + selectedTicket.ticket_id + '/resolve', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ final_text: document.getElementById('draftText').value, resolution })
+    });
+    const body = await resp.json();
+    if (!resp.ok) {
+      showResult(resultBox, 'warn', typeof body.detail === 'string' ? body.detail : 'حدث خطأ');
+      return;
+    }
+    if (resolution === 'escalate') {
+      showResult(resultBox, 'ok', 'تم تصعيد التذكرة للفريق المختص.');
+    } else if (body.email_sent) {
+      showResult(resultBox, 'ok', 'تم إرسال الرد للعميل بالإيميل بنجاح.');
+    } else {
+      showResult(resultBox, 'warn', 'لم يُرسل الإيميل: ' + (body.email_error || 'خطأ غير معروف'));
+    }
+    tickets = tickets.filter((t) => t.ticket_id !== selectedTicket.ticket_id);
+    if (body.ticket.status === 'pending') tickets.push(body.ticket);
+    renderTicketList();
+  } finally {
+    sendBtn.disabled = false; escBtn.disabled = false;
+  }
+}
+
+document.getElementById('sendBtn').addEventListener('click', () => resolve('send'));
+document.getElementById('escalateBtn').addEventListener('click', () => resolve('escalate'));
+
+if (localStorage.getItem(TOKEN_KEY)) {
+  showDashboard();
+}
+</script>
+</body>
+</html>
