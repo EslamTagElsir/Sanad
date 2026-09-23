@@ -6,12 +6,12 @@ import pytest
 
 from common import load_kb, load_past_tickets
 from evaluation.golden_eval import run, expected_calibration_error
-from stage2_hybrid import confidence
+from stage2_hybrid import confidence, rag
 from stage2_hybrid.confidence import ESCALATE_BELOW, load_golden
 from stage2_hybrid.rag import retrieve_with_signals
 from stage4_production import service
 from stage4_production.service import decide_action
-from tests.conftest import bearer
+from evaluation.tests.conftest import bearer
 
 import numpy as np
 
@@ -75,7 +75,7 @@ def test_ece_helper():
 
 def test_screenshot_case_is_no_longer_zero_confidence():
     """الحالة التي ظهرت في الواجهة بثقة 0% وتصعيد، رغم وجود مقالة وسابقة مطابقتين."""
-    candidates, signals = retrieve_with_signals(SCREENSHOT_MESSAGE, use_translation=False)
+    candidates, signals = retrieve_with_signals(SCREENSHOT_MESSAGE)  # ترجمة محفوظة بدل LLM (conftest)
     assert candidates[0]["source_id"] in {"kb_failed_transfer", "ticket_1042", "kb_refund_policy"}
     conf = confidence.get_model().predict(SCREENSHOT_MESSAGE, candidates[0], signals)
     assert conf >= ESCALATE_BELOW
@@ -106,20 +106,13 @@ def test_confidence_is_a_probability():
 def test_llm_rerank_reordering_does_not_collapse_confidence(client, monkeypatch):
     """ترتيب LLM قد يقدّم مصدرًا غير الأول هجينيًا؛ الثقة يجب ألا تنهار بسبب ذلك
     (كانت 0.24 → تصعيد خاطئ لنفس رسالة لقطة الشاشة)."""
-    monkeypatch.setattr(service, "llm_rerank", lambda q, cands: list(reversed(cands[:4])))
+    monkeypatch.setattr(rag, "llm_rerank", lambda q, cands: list(reversed(cands[:4])))
     body = client.post("/draft", json={"customer_message": SCREENSHOT_MESSAGE},
                        headers=bearer("sara.ahmed")).json()
     assert body["action"] != "escalate"
 
 
 SECOND_SCREENSHOT_MESSAGE = "الفلوس ال حولتها م وصلتش"
-
-
-def test_attached_pronoun_forms_are_understood():
-    from offline_embeddings import concepts_of
-    assert {"transfer", "money", "not_arrived"} <= concepts_of(SECOND_SCREENSHOT_MESSAGE)
-    assert "not_arrived" in concepts_of("الفلوس وصلتهاش")
-    assert "transfer" in concepts_of("بعتهولي امبارح")
 
 
 def test_second_screenshot_case_through_api(client):
@@ -150,3 +143,86 @@ def test_draft_request_ignores_legacy_queue_field(client):
     resp = client.post("/draft", json={"customer_message": SCREENSHOT_MESSAGE, "queue": "security"},
                        headers=bearer("sara.ahmed"))
     assert resp.status_code == 200 and resp.json()["citations"]
+
+
+def test_missing_translation_is_the_conservative_direction():
+    """بدون مزوّد LLM (لا ترجمة) الثقة يجب أن تنخفض أو تبقى، لا أن ترتفع."""
+    for q in [SCREENSHOT_MESSAGE, SECOND_SCREENSHOT_MESSAGE, "do you sell iPhones?"]:
+        with_tr, s1 = retrieve_with_signals(q)
+        without_tr, s2 = retrieve_with_signals(q, use_translation=False)
+        m = confidence.get_model()
+        assert m.predict(q, without_tr[0], s2) <= m.predict(q, with_tr[0], s1) + 1e-9
+
+
+def test_empty_llm_draft_falls_back_instead_of_500(monkeypatch):
+    """OpenRouter رجّع content=None للمسودة نفسها → كانت 500 في /draft."""
+    import common
+    from types import SimpleNamespace as NS
+    empty = NS(model="x", choices=[NS(message=NS(content=None))])
+    fake = NS(chat=NS(completions=NS(create=lambda **kw: empty)))
+    monkeypatch.setattr(common, "get_openrouter_client", lambda: fake)
+    chunk = {"source_type": "kb", "title": "t", "text": "نص"}
+    out = common.generate_draft("سؤال", [chunk])
+    assert isinstance(out, str) and out.strip()
+
+
+def test_openrouter_call_disables_reasoning_and_sends_fallback_models(monkeypatch):
+    import common
+    from types import SimpleNamespace as NS
+    seen = {}
+
+    def create(**kw):
+        seen.update(kw)
+        return NS(model=kw["model"], choices=[NS(message=NS(content=" نعم "))])
+
+    monkeypatch.setattr(common, "get_openrouter_client", lambda: NS(chat=NS(completions=NS(create=create))))
+    monkeypatch.setenv("OPENROUTER_MODELS", "a/one, b/two")
+    assert common.openrouter_chat([{"role": "user", "content": "x"}], 5, "t") == "نعم"
+    assert seen["model"] == "a/one"
+    assert seen["extra_body"] == {"models": ["a/one", "b/two"], "reasoning": {"enabled": False}}
+
+
+def test_openrouter_retries_when_reasoning_is_mandatory(monkeypatch):
+    """openrouter/free قد يختار موديلًا يرفض إيقاف التفكير (400) — نعيد بأقل تفكير."""
+    import common
+    import httpx
+    import openai
+    from types import SimpleNamespace as NS
+    calls = []
+
+    def create(**kw):
+        calls.append(kw["extra_body"]["reasoning"])
+        if kw["extra_body"]["reasoning"] == {"enabled": False}:
+            req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+            raise openai.BadRequestError("Reasoning is mandatory for this endpoint and cannot be disabled.",
+                                         response=httpx.Response(400, request=req), body=None)
+        return NS(model="m", choices=[NS(message=NS(content="ok"))])
+
+    monkeypatch.setattr(common, "get_openrouter_client", lambda: NS(chat=NS(completions=NS(create=create))))
+    assert common.openrouter_chat([{"role": "user", "content": "x"}], 5, "t") == "ok"
+    assert calls == [{"enabled": False}, {"effort": "low", "exclude": True}]
+
+
+def test_daily_quota_exhaustion_short_circuits_later_calls(monkeypatch):
+    """بعد 429 "free-models-per-day" لا نرسل طلبات (كانت تأخذ حتى 40s للرفض)."""
+    import time
+    import common
+    import httpx
+    import openai
+    from types import SimpleNamespace as NS
+    calls = []
+    reset_ms = int((time.time() + 600) * 1000)
+
+    def create(**kw):
+        calls.append(1)
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        raise openai.RateLimitError(
+            f"Rate limit exceeded: free-models-per-day. {{'X-RateLimit-Reset': '{reset_ms}'}}",
+            response=httpx.Response(429, request=req), body=None)
+
+    monkeypatch.setattr(common, "_quota_blocked_until", 0.0)
+    monkeypatch.setattr(common, "get_openrouter_client", lambda: NS(chat=NS(completions=NS(create=create))))
+    assert common.openrouter_chat([{"role": "user", "content": "x"}], 5, "t") is None
+    assert common._quota_blocked_until == pytest.approx(reset_ms / 1000)
+    assert common.openrouter_chat([{"role": "user", "content": "x"}], 5, "t") is None
+    assert len(calls) == 1

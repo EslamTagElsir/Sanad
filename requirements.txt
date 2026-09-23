@@ -1,14 +1,13 @@
-# بيئة تعليمية تعمل محليًا بالكامل بدون اتصال بمزوّدي embedding/vector DB
-# خارجيين (راجع offline_embeddings.py). لمشروع حقيقي أضف بدلًا منها:
+# الاسترجاع بنموذج embedding محلي (Qwen3-Embedding-0.6B افتراضيًا، راجع
+# stage2_hybrid/embeddings.py). لحجم بيانات أكبر أضف vector DB:
 #   qdrant-client أو psycopg[binary] (pgvector) حسب المسار المختار
-#   نموذج embedding متعدد اللغات حقيقي (Qwen3-Embedding عبر vLLM، أو Gemini/Voyage)
 
-rank-bm25
+sentence-transformers  # نموذج الـ embedding
+torch
 numpy
-scikit-learn
+scikit-learn  # Logistic Regression لمعايرة الثقة — راجع stage2_hybrid/confidence.py
 anthropic
-huggingface_hub  # بديل مجاني اختياري للتوليد عبر HF_API_TOKEN — راجع common.get_hf_client
-openai  # عميل OpenRouter (واجهة متوافقة) عبر OPENROUTER_API_KEY — راجع common.get_openrouter_client
+openai  # عميل OpenRouter (واجهة متوافقة) — كل مهام الـ LLM، راجع common.openrouter_chat
 python-dotenv  # تحميل مفاتيح .env تلقائيًا — راجع common.py
 pyjwt  # تسجيل دخول حقيقي (JWT) — راجع stage4_production/auth.py
 bcrypt  # تجزئة كلمات المرور

@@ -316,8 +316,9 @@ function renderDraft(draft) {
   }
   draft.citations.forEach((c) => {
     const chip = document.createElement('span');
-    chip.className = 'chip ' + (c.source_type === 'kb' ? 'chip-kb' : 'chip-ticket');
-    chip.textContent = c.title + (c.source_type === 'kb' ? ' · مصدر رسمي' : ' · سابقة');
+    const SOURCE_LABELS = { kb: ' · مصدر رسمي', manual: ' · دليل السياسات', past_ticket: ' · سابقة' };
+    chip.className = 'chip ' + (c.source_type === 'past_ticket' ? 'chip-ticket' : 'chip-kb');
+    chip.textContent = c.title + (SOURCE_LABELS[c.source_type] || ' · سابقة');
     citationsRow.appendChild(chip);
   });
 

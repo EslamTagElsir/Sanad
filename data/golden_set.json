@@ -15,6 +15,7 @@
     {"id": "g_fail_2", "question": "التحويل فشل والمبلغ اتخصم من رصيدي", "team": "payments", "in_scope": true, "expected_sources": ["kb_failed_transfer", "ticket_1042", "kb_refund_policy"]},
     {"id": "g_fail_3", "question": "My transfer failed but the money was deducted from my wallet", "team": "payments", "in_scope": true, "expected_sources": ["kb_failed_transfer", "ticket_1042", "kb_refund_policy"]},
     {"id": "g_fail_4", "question": "بعت قروش لاخوي وما وصلتو لسه، والرصيد نقص", "team": "payments", "in_scope": true, "expected_sources": ["kb_failed_transfer", "ticket_1042", "kb_refund_policy"]},
+    {"id": "g_fail_5", "question": "الفلوس ال حولتها م وصلتش", "team": "payments", "in_scope": true, "expected_sources": ["kb_failed_transfer", "ticket_1042", "kb_refund_policy"]},
 
     {"id": "g_ref_1", "question": "بعت فلوس لرقم غلط ينفع ترجعوها؟", "team": "payments", "in_scope": true, "expected_sources": ["kb_refund_policy", "ticket_1088"]},
     {"id": "g_ref_2", "question": "كم يستغرق استرداد المبلغ بعد فتح طلب الاسترجاع؟", "team": "payments", "in_scope": true, "expected_sources": ["kb_refund_policy", "ticket_1088", "kb_failed_transfer"]},

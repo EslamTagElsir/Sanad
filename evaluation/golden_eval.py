@@ -23,7 +23,7 @@ import numpy as np
 
 from stage2_hybrid.rag import retrieve_with_signals, FINAL_K
 from stage2_hybrid.confidence import (
-    load_golden, cross_validated_probs, ESCALATE_BELOW, SEND_READY_ABOVE,
+    load_golden, cross_validated_probs, is_correct_source, ESCALATE_BELOW, SEND_READY_ABOVE,
 )
 
 
@@ -33,8 +33,7 @@ def retrieval_metrics(items: list[dict]) -> dict:
         if not it["in_scope"]:
             continue
         candidates, _ = retrieve_with_signals(it["question"], use_translation=False)
-        ids = [c["source_id"] for c in candidates]
-        ranks = [i for i, sid in enumerate(ids) if sid in it["expected_sources"]]
+        ranks = [i for i, c in enumerate(candidates) if is_correct_source(c, it["expected_sources"])]
         hits1.append(bool(ranks) and ranks[0] == 0)
         hitsk.append(bool(ranks) and ranks[0] < FINAL_K)
         rr.append(1.0 / (ranks[0] + 1) if ranks else 0.0)

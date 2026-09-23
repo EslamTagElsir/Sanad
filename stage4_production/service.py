@@ -32,6 +32,7 @@ import os
 import secrets
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -42,8 +43,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from common import generate_draft, get_hf_client, get_openrouter_client, get_openrouter_model
-from stage2_hybrid.rag import retrieve_with_signals, llm_rerank, build_index, FINAL_K
+from common import generate_draft, openrouter_chat
+from stage2_hybrid import rag
+from stage2_hybrid.rag import retrieve_with_signals, build_index, FINAL_K
 from stage2_hybrid import confidence as confidence_model
 from stage2_hybrid.confidence import ESCALATE_BELOW, SEND_READY_ABOVE
 from stage4_production import auth
@@ -55,6 +57,7 @@ logger = logging.getLogger("agent_copilot")
 MAX_MESSAGE_CHARS = 4000
 
 _draft_cache: dict[str, dict] = {}
+_llm_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
 _tickets: dict[str, dict] = {}
 
 
@@ -144,48 +147,26 @@ def _parse_yes_no(text: Optional[str]) -> Optional[bool]:
 
 
 def _llm_scope_check(question: str, chunks: list[dict]) -> Optional[bool]:
-    """تحقق ثانٍ للحالات الحدّية فقط (توفيرًا للتكلفة) على كل المصادر التي
-    ستُبنى عليها المسودة (لا أولها فقط). مُسنَدة أساسًا لـ Hugging Face، مع
-    OpenRouter كاحتياطي. رد فارغ أو غامض أو فشل → None، فيبقى قرار نموذج
-    الثقة المعايَر كما هو."""
+    """تحقق ثانٍ عبر OpenRouter للحالات الحدّية فقط (توفيرًا للتكلفة) على كل
+    المصادر التي ستُبنى عليها المسودة (لا أولها فقط). رد فارغ أو غامض أو فشل →
+    None، فيبقى قرار نموذج الثقة المعايَر كما هو."""
     context = "\n\n---\n\n".join(c["text"] for c in chunks)
     prompt = (
         f"السياق:\n{context}\n\nرسالة العميل: {question}\n\n"
         "هل هذا السياق يحتوي فعلًا على ما يلزم للرد على رسالة العميل هذه؟ أجب بكلمة واحدة: نعم أو لا."
     )
-
-    hf_client = get_hf_client()
-    if hf_client is not None:
-        try:
-            response = hf_client.chat_completion(
-                messages=[{"role": "user", "content": prompt}], max_tokens=5,
-            )
-            verdict = _parse_yes_no(response.choices[0].message.content)
-            if verdict is not None:
-                return verdict
-        except Exception:
-            # فشل التحقق الثانوي = نفس سلوك عدم وجود مفتاح، لا 500 يُسقط /draft.
-            logger.warning("فشل تحقق LLM الثانوي عبر Hugging Face، جارٍ تسليم المهمة لـ OpenRouter", exc_info=True)
-
-    or_client = get_openrouter_client()
-    if or_client is not None:
-        try:
-            response = or_client.chat.completions.create(
-                model=get_openrouter_model(),
-                messages=[{"role": "user", "content": prompt}], max_tokens=20,
-            )
-            return _parse_yes_no(response.choices[0].message.content)
-        except Exception:
-            logger.warning("فشل تحقق LLM الثانوي عبر OpenRouter", exc_info=True)
-
-    return None
+    return _parse_yes_no(openrouter_chat([{"role": "user", "content": prompt}], max_tokens=10, task="scope_check"))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    t0 = time.perf_counter()
     build_index()
+    t1 = time.perf_counter()
     confidence_model.reset_model()
     confidence_model.get_model()
+    t2 = time.perf_counter()
+    logger.info(f"STARTUP | embedding model + index={(t1 - t0) * 1000:.0f}ms | confidence fit={(t2 - t1) * 1000:.0f}ms")
     logger.info("الفهرس ونموذج الثقة جاهزان، الخدمة بدأت.")
     yield
 
@@ -227,7 +208,7 @@ class DraftRequest(BaseModel):
 
 class Citation(BaseModel):
     title: str
-    source_type: str  # "kb" أو "past_ticket"
+    source_type: str  # "kb" أو "manual" (دليل السياسات) أو "past_ticket"
 
 
 class DraftResponse(BaseModel):
@@ -237,6 +218,10 @@ class DraftResponse(BaseModel):
     action: str  # send_ready | needs_review | escalate
     cached: bool
     latency_ms: float
+    # زمن كل مرحلة بالملّي ثانية (لتشخيص البطء): retrieval، translation، rerank،
+    # wait_llm (انتظار الترجمة/الترتيب بعد انتهاء الاسترجاع)، confidence،
+    # scope_check، draft.
+    timings: dict[str, float] = {}
 
 
 def _cache_key(question: str) -> str:
@@ -263,22 +248,42 @@ def handle_request(customer_message: str) -> DraftResponse:
         logger.info(f"CACHE HIT | msg={customer_message!r}")
         return DraftResponse(**{**cached, "cached": True, "latency_ms": round(latency, 2)})
 
-    # البحث في كل المصادر المتاحة (بدون تقييد بالأقسام).
-    candidates, signals = retrieve_with_signals(customer_message)
-    top = (llm_rerank(customer_message, candidates) or candidates[:FINAL_K]) if candidates else []
+    # البحث في كل المصادر المتاحة. ترتيب المرشحين يعتمد على الرسالة الأصلية فقط،
+    # فترجمة الـ LLM (المطلوبة لحساب الثقة) وترتيب الـ LLM مستقلان ويعملان بالتوازي
+    # بدل طلبين متتاليين لـ OpenRouter.
+    timings: dict[str, float] = {}
+
+    def timed(name, fn, *args):
+        t = time.perf_counter()
+        try:
+            return fn(*args)
+        finally:
+            timings[name] = round((time.perf_counter() - t) * 1000, 1)
+
+    translation_future = _llm_pool.submit(timed, "translation", rag.translate_query_for_retrieval, customer_message)
+    candidates, _ = timed("retrieval", retrieve_with_signals, customer_message, 8, False)
+    rerank_future = _llm_pool.submit(timed, "rerank", rag.llm_rerank, customer_message, candidates) if candidates else None
+    t_wait = time.perf_counter()
+    translation = translation_future.result()
+    reranked = rerank_future.result() if rerank_future else None
+    timings["wait_llm"] = round((time.perf_counter() - t_wait) * 1000, 1)
+    candidates, signals = timed("signals", retrieve_with_signals, customer_message, 8, False, translation)
+    top = (reranked or candidates[:FINAL_K]) if candidates else []
 
     # نموذج الثقة مُعايَر على ميزات أول نتيجة في الترتيب الهجين (هامش RRF،
     # اتفاق المؤشرات). ترتيب LLM قد يقدّم مصدرًا آخر فتبدو ميزاته الترتيبية
     # "ضعيفة" ظلمًا، لذا نأخذ أعلى احتمال بين المصادر النهائية المعروضة.
+    t = time.perf_counter()
     model = confidence_model.get_model()
     confidence = max((model.predict(customer_message, c, signals) for c in top), default=0.0)
     action = decide_action(confidence, top[0] if top else None)
+    timings["confidence"] = round((time.perf_counter() - t) * 1000, 1)
 
     # نطاق حدّي حول عتبة التصعيد فقط (حيث الخطأ أخطر: عرض مسودة رغم عدم وجود
     # مصدر مناسب فعلًا). لا نستشير LLM حول عتبة send_ready لأن needs_review هو
     # افتراضي آمن أصلًا هناك (الموظف يراجع في الحالتين).
     if top and abs(confidence - ESCALATE_BELOW) <= 0.1:
-        llm_ok = _llm_scope_check(customer_message, top)
+        llm_ok = timed("scope_check", _llm_scope_check, customer_message, top)
         if llm_ok is not None:
             action = "needs_review" if llm_ok else "escalate"
             logger.info(f"  ↳ نطاق حدّي (confidence={confidence:.3f})، تحقق LLM: in_scope={llm_ok}")
@@ -287,7 +292,7 @@ def handle_request(customer_message: str) -> DraftResponse:
         draft_text = ESCALATE_TEXT
         citations = []
     else:
-        draft_text = generate_draft(customer_message, top)
+        draft_text = timed("draft", generate_draft, customer_message, top)
         citations = [Citation(title=c["title"], source_type=c["source_type"]) for c in top]
 
     latency = (time.time() - start) * 1000
@@ -296,9 +301,9 @@ def handle_request(customer_message: str) -> DraftResponse:
 
     logger.info(
         f"msg={customer_message!r} | confidence={confidence:.3f} | "
-        f"action={action} | latency_ms={latency:.1f}"
+        f"action={action} | latency_ms={latency:.1f} | timings={timings}"
     )
-    return DraftResponse(**result, cached=False, latency_ms=round(latency, 2))
+    return DraftResponse(**result, cached=False, latency_ms=round(latency, 2), timings=timings)
 
 
 @app.post("/draft", response_model=DraftResponse)

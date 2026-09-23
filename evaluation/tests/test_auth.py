@@ -7,7 +7,7 @@ import jwt
 import pytest
 
 from stage4_production import auth, service
-from tests.conftest import PASSWORD, bearer
+from evaluation.tests.conftest import PASSWORD, bearer
 
 PROTECTED = [
     ("post", "/draft", {"customer_message": "حسابي اتجمد"}),

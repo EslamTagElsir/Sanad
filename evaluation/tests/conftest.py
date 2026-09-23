@@ -2,7 +2,8 @@
 إعداد مشترك للاختبارات: بيئة معزولة وحتمية بالكامل.
   - كل مفاتيح المزوّدين الخارجيين فارغة (قبل أي import لـ common الذي يحمّل
     .env؛ load_dotenv لا يستبدل متغيرًا موجودًا) → لا استدعاءات LLM ولا إيميل.
-  - لا نموذج dense (الاختبارات تقيس المؤشرات المحلية؛ النموذج اختياري).
+  - نموذج الـ embedding الافتراضي الحقيقي (Qwen3-Embedding، من الكاش المحلي)
+    لأن الاسترجاع كله قائم عليه.
   - فهرس ومستخدمون في مجلد مؤقت، لا يلمسون data/users.json ولا store/.
 """
 
@@ -10,13 +11,13 @@ import os
 import sys
 from pathlib import Path
 
-for var in ("OPENROUTER_API_KEY", "HF_API_TOKEN", "ANTHROPIC_API_KEY", "SENDGRID_API_KEY",
+for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SENDGRID_API_KEY",
             "AGENT_ASSIST_EMPLOYEE_KEYS", "AGENT_ASSIST_CUSTOMER_KEYS", "AGENT_ASSIST_DEV_OPEN",
             "AGENT_ASSIST_EMBED_MODEL", "AGENT_ASSIST_LARGE_DATA"):
     os.environ[var] = ""
 os.environ["AGENT_ASSIST_JWT_SECRET"] = "test-secret-" + "x" * 40
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import json
 
@@ -37,7 +38,7 @@ USERS = [
 def isolated_index(tmp_path_factory):
     store = tmp_path_factory.mktemp("store")
     rag.STORE_DIR = store
-    rag.INDEX_PATH = store / "index_v2.pkl"
+    rag.INDEX_PATH = store / "index_dense.pkl"
     rag._INDEX = None
     confidence.reset_model()
     rag.build_index()
@@ -52,8 +53,17 @@ def users_file(tmp_path_factory):
     return path
 
 
+def _cached_translation(question: str):
+    """بديل حتمي لترجمة الـ LLM: الترجمة المحفوظة لأسئلة المجموعة الذهبية، وNone
+    لغيرها (نفس سلوك الخدمة حين لا يتوفر مزوّد LLM)."""
+    by_question = {it["question"]: confidence.load_golden_translations().get(it["id"])
+                   for it in confidence.load_golden()}
+    return by_question.get(question)
+
+
 @pytest.fixture(autouse=True)
 def isolated_state(users_file, monkeypatch):
+    monkeypatch.setattr(rag, "translate_query_for_retrieval", _cached_translation)
     monkeypatch.setattr(auth, "USERS_PATH", users_file)
     monkeypatch.setattr(service, "EMPLOYEE_KEYS", set())
     monkeypatch.setattr(service, "CUSTOMER_KEYS", set())

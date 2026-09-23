@@ -5,9 +5,11 @@ stage2_hybrid/confidence.py — ثقة معايَرة (Calibrated Confidence)
 وأول مصدر). تلك الطريقة كانت تعطي 0% لرسالة عامية صحيحة تمامًا مثل
 "حولت فلوس و الفلوس م وصلتش" لمجرد أن المقالة الرسمية مكتوبة بالفصحى.
 
-الآن الثقة = احتمال أن يكون أول مصدر مسترجَع هو فعلًا المصدر الصحيح، وتُحسب
-بنموذج Logistic Regression على إشارات الاسترجاع المتعددة (تشابه دلالي، تشابه
-حروف، تشابه كلمات، BM25، تغطية المفاهيم، اتفاق المؤشرات، هامش الترتيب).
+الآن الثقة = احتمال أن يكون المصدر المسترجَع هو فعلًا المصدر الصحيح، وتُحسب
+بنموذج Logistic Regression (Platt scaling) على تشابه نموذج الـ embedding بين
+السؤال والمصدر. جُرّبت إشارات إضافية (الهامش عن أقرب منافس، البروز z-score عن
+بقية القاعدة) وكانت أسوأ في اكتشاف الأسئلة خارج النطاق: قاعدة المعرفة صغيرة،
+فحتى سؤال عن الطقس "يبرز" نسبيًا عن بقية المقالات.
 النموذج يُدرَّب على data/golden_set.json، فالرقم الناتج احتمال فعلي قابل
 للقياس: من بين المسودات بثقة ~0.8، يجب أن يكون ~80% منها بمصدر صحيح.
 جودة المعايرة (Brier / ECE) تُقاس بـ cross-validation في evaluation/golden_eval.py.
@@ -19,9 +21,10 @@ from pathlib import Path
 
 import numpy as np
 
-from stage2_hybrid.rag import retrieve_with_signals, load_index
+from stage2_hybrid.rag import retrieve_with_signals
 
 GOLDEN_PATH = Path(__file__).parent.parent / "data" / "golden_set.json"
+TRANSLATIONS_PATH = Path(__file__).parent.parent / "data" / "golden_translations.json"
 logger = logging.getLogger("agent_copilot")
 
 # عتبات القرار على الاحتمال المعايَر (لا على نسبة كلمات): أقل من ESCALATE_BELOW
@@ -31,7 +34,18 @@ logger = logging.getLogger("agent_copilot")
 ESCALATE_BELOW = 0.4
 SEND_READY_ABOVE = 0.8
 
-BASE_FEATURES = ["char", "word", "bm25_sq", "concept", "top3_frac", "rrf_margin"]
+FEATURES = ["dense"]
+
+
+def is_correct_source(chunk: dict, expected_sources: list[str]) -> bool:
+    """المصدر صحيح إذا كان نفسه ضمن المتوقع، أو قطعة من دليل السياسات تشرح
+    نفس السياسة (تذكر مرجع المقالة المتوقعة). قطع الدليل التي تجمع مراجع كثيرة
+    (مثل جدول الأرقام المرجعية) لا تُحتسب بمرجع واحد فيها، لأنها ليست إجابة
+    مركّزة على سؤال بعينه."""
+    if chunk["source_id"] in expected_sources:
+        return True
+    refs = set(chunk.get("refs", []))
+    return 0 < len(refs) <= 3 and bool(refs & set(expected_sources))
 
 
 def load_golden() -> list[dict]:
@@ -39,38 +53,32 @@ def load_golden() -> list[dict]:
         return json.load(f)["items"]
 
 
-def feature_names() -> list[str]:
-    return (["dense"] if load_index().get("dense") is not None else []) + BASE_FEATURES
+def load_golden_translations() -> dict[str, str | None]:
+    """ترجمات LLM محفوظة لأسئلة المجموعة الذهبية (evaluation/translate_golden.py)."""
+    if not TRANSLATIONS_PATH.exists():
+        return {}
+    with open(TRANSLATIONS_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def extract_features(question: str, chunk: dict, signals: dict) -> list[float]:
-    s = signals[chunk["chunk_id"]]
-    others = [v["rrf"] for cid, v in signals.items() if cid != chunk["chunk_id"] and not cid.startswith("__")]
-    # الهامش بوحدات "مرتبة واحدة" في RRF (1/61) — موجب إذا تصدّر المصدر بوضوح.
-    rrf_margin = (s["rrf"] - max(others, default=0.0)) * 61
-    values = {
-        "dense": s["dense"],
-        "char": s["char"],
-        "word": s["word"],
-        "bm25_sq": s["bm25"] / (s["bm25"] + 5.0),
-        "concept": s["concept"],
-        "top3_frac": s["top3_frac"],
-        "rrf_margin": rrf_margin,
-    }
-    return [values[n] for n in feature_names()]
+    return [signals[chunk["chunk_id"]]["dense"]]
 
 
 def _training_rows(items: list[dict]):
-    """لكل سؤال ذهبي: إشارات أول نتيجة (بدون ترجمة LLM حتى يكون التدريب حتميًا)،
-    والتسمية = 1 إذا كان أول مصدر ضمن expected_sources."""
+    """لكل سؤال ذهبي: إشارات أول نتيجة بنفس صيغة وقت التشغيل (الأصل + ترجمة
+    LLM) لكن بترجمة محفوظة حتى يكون التدريب حتميًا وبلا استدعاءات، والتسمية = 1
+    إذا كان أول مصدر ضمن expected_sources."""
+    translations = load_golden_translations()
     X, y = [], []
     for it in items:
-        candidates, signals = retrieve_with_signals(it["question"], use_translation=False)
+        candidates, signals = retrieve_with_signals(
+            it["question"], use_translation=False, translation=translations.get(it["id"]))
         if not candidates:
             continue
         top = candidates[0]
         X.append(extract_features(it["question"], top, signals))
-        y.append(int(it["in_scope"] and top["source_id"] in it["expected_sources"]))
+        y.append(int(it["in_scope"] and is_correct_source(top, it["expected_sources"])))
     return np.array(X), np.array(y)
 
 
@@ -84,11 +92,10 @@ def _new_estimator():
 class ConfidenceModel:
     def __init__(self):
         self.estimator = None
-        self.features: list[str] = []
+        self.features: list[str] = FEATURES
 
     def fit(self, items: list[dict]) -> "ConfidenceModel":
         X, y = _training_rows(items)
-        self.features = feature_names()
         if len(set(y)) < 2:
             logger.warning("المجموعة الذهبية لا تحتوي الفئتين، الثقة ستكون غير معايَرة")
             self.estimator = None
@@ -102,9 +109,8 @@ class ConfidenceModel:
             return 0.0
         x = extract_features(question, chunk, signals)
         if self.estimator is None:
-            # بدون مجموعة ذهبية: تقدير متحفظ غير معايَر (اتفاق المؤشرات × تغطية المفاهيم).
-            f = dict(zip(feature_names(), x))
-            return float(f["top3_frac"] * max(f["concept"], f["char"]))
+            # بدون مجموعة ذهبية: التشابه الخام (غير معايَر) كتقدير احتياطي.
+            return float(min(max(x[0], 0.0), 1.0))
         return float(self.estimator.predict_proba(np.array([x]))[0, 1])
 
 
