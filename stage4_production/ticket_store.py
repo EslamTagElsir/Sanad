@@ -118,10 +118,16 @@ def add_message(ticket_id: str, sender: str, text: str, kind: str = "message") -
         conn.execute("UPDATE tickets SET updated_at = ? WHERE ticket_id = ?", (now, ticket_id))
 
 
-def set_status(ticket_id: str, status: str) -> None:
+def set_status(ticket_id: str, status: str, expected: Optional[set[str]] = None) -> bool:
+    """expected: الحالات المسموح الانتقال منها. الفحص والتغيير في جملة UPDATE واحدة
+    (ذرّي)، فطلبان متزامنان لا يمرّان معًا. يُرجع False إن لم تتغير الحالة."""
     assert status in STATUSES, status
+    sql, params = "UPDATE tickets SET status = ?, updated_at = ? WHERE ticket_id = ?", [status, time.time(), ticket_id]
+    if expected is not None:
+        sql += f" AND status IN ({', '.join('?' * len(expected))})"
+        params += sorted(expected)
     with _connect() as conn:
-        conn.execute("UPDATE tickets SET status = ?, updated_at = ? WHERE ticket_id = ?", (status, time.time(), ticket_id))
+        return conn.execute(sql, params).rowcount > 0
 
 
 def conversation_for_retrieval(ticket: dict) -> str:

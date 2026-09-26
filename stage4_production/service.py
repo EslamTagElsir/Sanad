@@ -63,7 +63,9 @@ MAX_MESSAGE_CHARS = 4000
 # لعملاء حقيقيين يجب أن يكون عنوانًا عامًا لا localhost.
 PUBLIC_URL = (os.environ.get("SANAD_PUBLIC_URL") or "http://localhost:8000").rstrip("/")
 
+# كاش النتائج في الذاكرة، ويُفرَّغ نصفه الأقدم عند تجاوز الحد (نفس نمط كاش الترجمة).
 _draft_cache: dict[str, dict] = {}
+_DRAFT_CACHE_MAX = 500
 _llm_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
 
 
@@ -258,18 +260,21 @@ def handle_request(customer_message: str, allow_clarify: bool = True) -> DraftRe
             timings[name] = round((time.perf_counter() - t) * 1000, 1)
 
     translation_future = _llm_pool.submit(timed, "translation", rag.translate_query_for_retrieval, customer_message)
-    candidates, _ = timed("retrieval", retrieve_with_signals, customer_message, 8, False)
+    t = time.perf_counter()
+    question_vec = rag.embed_query(customer_message)   # يُرمَّز مرة واحدة ويُستخدم في الاستدعاءين
+    candidates, _ = retrieve_with_signals(customer_message, 8, False, None, question_vec)
+    timings["retrieval"] = round((time.perf_counter() - t) * 1000, 1)
     rerank_future = _llm_pool.submit(timed, "rerank", rag.llm_rerank, customer_message, candidates) if candidates else None
     t_wait = time.perf_counter()
     translation = translation_future.result()
     reranked = rerank_future.result() if rerank_future else None
     timings["wait_llm"] = round((time.perf_counter() - t_wait) * 1000, 1)
-    candidates, signals = timed("signals", retrieve_with_signals, customer_message, 8, False, translation)
+    candidates, signals = timed("signals", retrieve_with_signals, customer_message, 8, False, translation, question_vec)
     top = (reranked or candidates[:FINAL_K]) if candidates else []
 
-    # نموذج الثقة مُعايَر على ميزات أول نتيجة في الترتيب الهجين (هامش RRF،
-    # اتفاق المؤشرات). ترتيب LLM قد يقدّم مصدرًا آخر فتبدو ميزاته الترتيبية
-    # "ضعيفة" ظلمًا، لذا نأخذ أعلى احتمال بين المصادر النهائية المعروضة.
+    # نموذج الثقة مُعايَر على تشابه (dense) أول نتيجة في ترتيب الـ embedding. ترتيب
+    # LLM قد يقدّم مصدرًا آخر تشابهه أقل رغم أنه الأنسب، لذا نأخذ أعلى احتمال بين
+    # المصادر النهائية المعروضة.
     t = time.perf_counter()
     model = confidence_model.get_model()
     confidence = max((model.predict(customer_message, c, signals) for c in top), default=0.0)
@@ -308,6 +313,9 @@ def handle_request(customer_message: str, allow_clarify: bool = True) -> DraftRe
     # نتيجة محسوبة بدون ترجمة بسبب عطل مؤقت لا تُخزَّن: إعادة التوليد بعد قليل يجب
     # أن تجرّب الترجمة من جديد، لا أن ترجع نفس النتيجة من الكاش.
     if translated or not common.get_openrouter_client():
+        if len(_draft_cache) >= _DRAFT_CACHE_MAX:
+            for old in list(_draft_cache)[: _DRAFT_CACHE_MAX // 2]:
+                del _draft_cache[old]
         _draft_cache[key] = result
 
     logger.info(
@@ -388,6 +396,9 @@ class ResolveResponse(BaseModel):
     reply_link: Optional[str] = None  # للأسئلة التوضيحية: ليرسله الموظف يدويًا إن فشل الإيميل
 
 
+CLOSED_STATUSES = {"sent", "escalated"}
+
+
 def reply_link(ticket: dict) -> str:
     return f"{PUBLIC_URL}/app/reply.html?t={ticket['reply_token']}"
 
@@ -403,6 +414,8 @@ def resolve_ticket(ticket_id: str, req: ResolveRequest, employee: dict = Depends
         raise HTTPException(status_code=404, detail="التذكرة غير موجودة")
     if req.resolution not in ("send", "clarify", "escalate"):
         raise HTTPException(status_code=422, detail="resolution يجب أن تكون 'send' أو 'clarify' أو 'escalate'")
+    if ticket["status"] in CLOSED_STATUSES:
+        raise HTTPException(status_code=409, detail="التذكرة مغلقة بالفعل (أُرسل الرد أو صُعّدت)")
 
     email_sent, email_error, link = False, None, None
     if req.resolution in ("send", "clarify"):
@@ -465,10 +478,10 @@ def reply_view(token: str):
 @app.post("/reply/{token}")
 def reply_submit(token: str, req: CustomerReply):
     ticket = _ticket_by_token(token)
-    if ticket["status"] != "awaiting_customer":
+    # الانتقال أولًا وذرّيًا: من ردّين متزامنين واحد فقط يغيّر الحالة ويُحفظ.
+    if not ticket_store.set_status(ticket["ticket_id"], "pending", expected={"awaiting_customer"}):
         raise HTTPException(status_code=409, detail="تم استلام ردك بالفعل، وسيتواصل معك أحد موظفي الدعم.")
-    ticket_store.add_message(ticket["ticket_id"], "customer", req.message)
-    ticket_store.set_status(ticket["ticket_id"], "pending")   # ترجع لقائمة الموظف
+    ticket_store.add_message(ticket["ticket_id"], "customer", req.message)   # ترجع لقائمة الموظف
     logger.info(f"CUSTOMER REPLY | id={ticket['ticket_id']} | msg={req.message!r}")
     return {"status": "received"}
 

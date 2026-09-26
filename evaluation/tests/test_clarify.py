@@ -109,6 +109,25 @@ def test_failed_email_keeps_ticket_pending_and_returns_link(client):
     assert res["reply_link"] and "/app/reply.html?t=" in res["reply_link"]
 
 
+def test_closed_ticket_cannot_be_resolved_again(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(service, "send_reply_email", lambda to_email, subject, body_text: (sent.append(body_text), (True, None))[1])
+    ticket = client.post("/submit-ticket", json={"customer_message": VAGUE, "customer_email": "a@b.co"}).json()
+    url, headers = f"/tickets/{ticket['ticket_id']}/resolve", bearer("sara.ahmed")
+    assert client.post(url, headers=headers, json={"final_text": "رد", "resolution": "send"}).json()["ticket"]["status"] == "sent"
+    for resolution in ("send", "clarify", "escalate"):
+        assert client.post(url, headers=headers, json={"final_text": "رد", "resolution": resolution}).status_code == 409
+    assert len(sent) == 1                                          # لا إيميل مكرر للعميل
+
+
+def test_set_status_expected_is_conditional():
+    t = ticket_store.create_ticket("رسالة", None)
+    assert not ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})
+    assert ticket_store.set_status(t["ticket_id"], "awaiting_customer", expected={"pending"})
+    assert ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})
+    assert not ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})   # الثاني يفشل
+
+
 def test_reply_token_security(client):
     assert client.get("/reply/not-a-real-token").status_code == 404
     assert client.post("/reply/not-a-real-token", json={"message": "x"}).status_code == 404

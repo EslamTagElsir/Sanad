@@ -47,18 +47,6 @@ def load_past_tickets() -> List[Dict]:
         return json.load(f)
 
 
-def load_kb_large() -> List[Dict]:
-    """مجموعة بيانات صناعية كبيرة لاختبار الحجم (data/gen_large_dataset.py)،
-    منفصلة عن kb_articles.json الأصلية حتى لا تتأثر اختبارات/golden set الحالية."""
-    with open(DATA_DIR / "kb_articles_large.json", "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def load_past_tickets_large() -> List[Dict]:
-    with open(DATA_DIR / "past_tickets_large.json", "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def simple_chunk(text: str, chunk_size: int = 450, overlap: int = 80) -> List[str]:
     sentences = re.split(r"(?<=[.!؟?])\s+", text.strip())
     chunks, current = [], ""
@@ -262,15 +250,6 @@ def build_ticket_chunks(tickets: List[Dict]) -> List[Dict]:
             "embed_text": f"{t['customer_message']} {t['resolution']}",
         })
     return chunks
-
-
-def get_anthropic_client():
-    import os
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    import anthropic
-    return anthropic.Anthropic(api_key=api_key)
 
 
 # كل مهام الـ LLM (ترجمة السؤال، ترتيب المصادر، تحقق النطاق، كتابة المسودة) عبر

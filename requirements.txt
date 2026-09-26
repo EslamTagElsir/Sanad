@@ -12,7 +12,6 @@ numpy==2.5.3
 pymupdf==1.28.2               # استخراج نص دليل السياسات من الـ PDF (رخصة AGPL) — راجع common.load_policy_manual_sections
 scikit-learn==1.9.1           # Logistic Regression لمعايرة الثقة — راجع stage2_hybrid/confidence.py
 openai==3.17.0                # عميل OpenRouter (واجهة متوافقة) — كل مهام الـ LLM، راجع common.openrouter_chat
-anthropic==1.7.0
 python-dotenv==1.2.3          # تحميل مفاتيح .env تلقائيًا — راجع common.py
 PyJWT==2.14.0                 # تسجيل دخول حقيقي (JWT) — راجع stage4_production/auth.py
 bcrypt==5.0.0                 # تجزئة كلمات المرور

@@ -20,7 +20,6 @@
 """
 
 import logging
-import os
 import re
 import sys
 from pathlib import Path
@@ -31,20 +30,14 @@ import pickle
 import numpy as np
 
 from common import (
-    load_kb, load_past_tickets, load_kb_large, load_past_tickets_large,
+    load_kb, load_past_tickets,
     build_kb_chunks, build_ticket_chunks, generate_draft,
     load_policy_manual_sections, build_manual_chunks,
     openrouter_chat,
 )
 from stage2_hybrid.embeddings import get_embedder
 
-# SANAD_LARGE_DATA=1 يضيف مجموعة البيانات الصناعية الكبيرة (data/*_large.json)
-# فوق البيانات الأصلية عند بناء الفهرس — لاختبار stage4 API على حجم بيانات أكبر
-# بكثير دون المساس بالبيانات الأصلية أو كسر اختبارات pytest الحالية (المُعطَّل
-# افتراضيًا، فالسلوك الافتراضي يبقى كما هو تمامًا).
-USE_LARGE_DATA = os.environ.get("SANAD_LARGE_DATA", "").lower() in ("1", "true", "yes")
-
-STORE_DIR = Path(__file__).parent / ("store_large" if USE_LARGE_DATA else "store")
+STORE_DIR = Path(__file__).parent / "store"
 INDEX_PATH = STORE_DIR / "index_dense.pkl"
 
 CANDIDATE_POOL = 8
@@ -67,12 +60,8 @@ def _sources_fingerprint() -> str:
 def build_index():
     global _INDEX
     STORE_DIR.mkdir(exist_ok=True)
-    kb = load_kb()
-    tickets = load_past_tickets()
-    if USE_LARGE_DATA:
-        kb = kb + load_kb_large()
-        tickets = tickets + load_past_tickets_large()
-    chunks = build_kb_chunks(kb) + build_ticket_chunks(tickets) + build_manual_chunks(load_policy_manual_sections())
+    chunks = (build_kb_chunks(load_kb()) + build_ticket_chunks(load_past_tickets())
+              + build_manual_chunks(load_policy_manual_sections()))
     embedder = get_embedder()
     index = {
         "chunks": chunks,
@@ -87,8 +76,7 @@ def build_index():
     n_kb = sum(1 for c in chunks if c["source_type"] == "kb")
     n_ticket = sum(1 for c in chunks if c["source_type"] == "past_ticket")
     n_manual = sum(1 for c in chunks if c["source_type"] == "manual")
-    mode = " [وضع البيانات الكبيرة مفعّل]" if USE_LARGE_DATA else ""
-    print(f"تمت فهرسة {len(chunks)} قطعة ({n_kb} من KB + {n_ticket} من تذاكر سابقة + {n_manual} من دليل السياسات) بنموذج {embedder.model_name}.{mode}")
+    print(f"تمت فهرسة {len(chunks)} قطعة ({n_kb} من KB + {n_ticket} من تذاكر سابقة + {n_manual} من دليل السياسات) بنموذج {embedder.model_name}.")
     return index
 
 
@@ -133,8 +121,13 @@ def translate_query_for_retrieval(question: str) -> str | None:
     return translation
 
 
+def embed_query(text: str) -> np.ndarray:
+    """متجه سؤال واحد (يُحسب مرة ويُمرَّر لـ retrieve_with_signals بدل إعادة ترميزه)."""
+    return get_embedder().encode([text], is_query=True)[0]
+
+
 def retrieve_with_signals(question: str, pool: int = CANDIDATE_POOL, use_translation: bool = True,
-                          translation: str | None = None):
+                          translation: str | None = None, question_vec: np.ndarray | None = None):
     """الاسترجاع الدلالي + درجات التشابه لكل مصدر (تُستخدم لحساب الثقة المعايَرة).
 
     الترتيب: بتشابه الرسالة الأصلية (الأدق في ترتيب المصادر على المجموعة الذهبية).
@@ -148,18 +141,25 @@ def retrieve_with_signals(question: str, pool: int = CANDIDATE_POOL, use_transla
     ترجمة (لا مزوّد متاح) تُحسب الإشارة من الأصل فقط، فتكون الثقة أقل والقرار
     أميل للتصعيد — الاتجاه الآمن.
 
+    question_vec: متجه الرسالة الأصلية محسوب مسبقًا (embed_query) — الخدمة تستدعي
+    هذه الدالة مرتين لنفس الرسالة (قبل الترجمة وبعدها)، فلا داعي لترميزها مرتين.
+
     يُرجع (candidates, signals) حيث signals[chunk_id] = {"dense": تشابه}."""
     index = load_index()
     chunks = index["chunks"]
     embedder = get_embedder()
 
-    queries = [question]
     if translation is None and use_translation:
         translation = translate_query_for_retrieval(question)
-    if translation:
-        queries.append(translation)
+    if question_vec is None:
+        queries = [question] + ([translation] if translation else [])
+        query_vecs = embedder.encode(queries, is_query=True)
+    else:
+        query_vecs = np.asarray([question_vec])
+        if translation:
+            query_vecs = np.vstack([query_vecs, embedder.encode([translation], is_query=True)])
 
-    sims = index["matrix"] @ embedder.encode(queries, is_query=True).T  # (n_chunks, n_queries)
+    sims = index["matrix"] @ query_vecs.T  # (n_chunks, n_queries)
     order = np.argsort(-sims[:, 0])
     best = sims.max(axis=1)
 

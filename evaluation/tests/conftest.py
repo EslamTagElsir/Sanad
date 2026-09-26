@@ -11,9 +11,9 @@ import os
 import sys
 from pathlib import Path
 
-for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SENDGRID_API_KEY",
+for var in ("OPENROUTER_API_KEY", "SENDGRID_API_KEY",
             "SANAD_EMPLOYEE_KEYS", "SANAD_CUSTOMER_KEYS", "SANAD_DEV_OPEN",
-            "SANAD_EMBED_MODEL", "SANAD_LARGE_DATA"):
+            "SANAD_EMBED_MODEL"):
     os.environ[var] = ""
 os.environ["SANAD_JWT_SECRET"] = "test-secret-" + "x" * 40
 
