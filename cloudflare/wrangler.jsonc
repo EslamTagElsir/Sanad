@@ -21,6 +21,11 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	// النسخة القديمة كانت تعرّف Durable Object باسم SanadContainer؛ نحذفها هنا.
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SanadContainer"] },
+		{ "tag": "v2", "deleted_classes": ["SanadContainer"] }
+	],
 	"vars": {
 		// عنوان رابط رد العميل في الإيميل. اتركه كما هو ليؤخذ تلقائيًا من عنوان الطلب،
 		// أو ضع عنوانك الفعلي/الدومين الخاص.
