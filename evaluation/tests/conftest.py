@@ -12,10 +12,10 @@ import sys
 from pathlib import Path
 
 for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "SENDGRID_API_KEY",
-            "AGENT_ASSIST_EMPLOYEE_KEYS", "AGENT_ASSIST_CUSTOMER_KEYS", "AGENT_ASSIST_DEV_OPEN",
-            "AGENT_ASSIST_EMBED_MODEL", "AGENT_ASSIST_LARGE_DATA"):
+            "SANAD_EMPLOYEE_KEYS", "SANAD_CUSTOMER_KEYS", "SANAD_DEV_OPEN",
+            "SANAD_EMBED_MODEL", "SANAD_LARGE_DATA"):
     os.environ[var] = ""
-os.environ["AGENT_ASSIST_JWT_SECRET"] = "test-secret-" + "x" * 40
+os.environ["SANAD_JWT_SECRET"] = "test-secret-" + "x" * 40
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from stage2_hybrid import rag, confidence
-from stage4_production import auth, service
+from stage4_production import auth, service, ticket_store
 
 PASSWORD = "correct horse battery staple"
 USERS = [
@@ -62,14 +62,14 @@ def _cached_translation(question: str):
 
 
 @pytest.fixture(autouse=True)
-def isolated_state(users_file, monkeypatch):
+def isolated_state(users_file, monkeypatch, tmp_path):
     monkeypatch.setattr(rag, "translate_query_for_retrieval", _cached_translation)
     monkeypatch.setattr(auth, "USERS_PATH", users_file)
     monkeypatch.setattr(service, "EMPLOYEE_KEYS", set())
     monkeypatch.setattr(service, "CUSTOMER_KEYS", set())
     monkeypatch.setattr(service, "DEV_OPEN", False)
     service._draft_cache.clear()
-    service._tickets.clear()
+    monkeypatch.setattr(ticket_store, "DB_PATH", tmp_path / "tickets.db")   # قاعدة تذاكر نظيفة لكل اختبار
     auth._failed_logins.clear()
     yield
 

@@ -15,7 +15,7 @@
    الخطوة تُتجاوز ويعتمد الاسترجاع على النموذج متعدد اللغات وحده.
 4. ترتيب نهائي بحكم LLM (llm_rerank) إن توفر مزوّد.
 
-شغّله من داخل مجلد agent-assist-copilot:
+شغّله من داخل مجلد المشروع (sanad):
     python -m stage2_hybrid.rag "الكود بتاع السحب من الوكيل خلص عليا"
 """
 
@@ -38,11 +38,11 @@ from common import (
 )
 from stage2_hybrid.embeddings import get_embedder
 
-# AGENT_ASSIST_LARGE_DATA=1 يضيف مجموعة البيانات الصناعية الكبيرة (data/*_large.json)
+# SANAD_LARGE_DATA=1 يضيف مجموعة البيانات الصناعية الكبيرة (data/*_large.json)
 # فوق البيانات الأصلية عند بناء الفهرس — لاختبار stage4 API على حجم بيانات أكبر
 # بكثير دون المساس بالبيانات الأصلية أو كسر اختبارات pytest الحالية (المُعطَّل
 # افتراضيًا، فالسلوك الافتراضي يبقى كما هو تمامًا).
-USE_LARGE_DATA = os.environ.get("AGENT_ASSIST_LARGE_DATA", "").lower() in ("1", "true", "yes")
+USE_LARGE_DATA = os.environ.get("SANAD_LARGE_DATA", "").lower() in ("1", "true", "yes")
 
 STORE_DIR = Path(__file__).parent / ("store_large" if USE_LARGE_DATA else "store")
 INDEX_PATH = STORE_DIR / "index_dense.pkl"
@@ -107,15 +107,30 @@ def load_index() -> dict:
     return build_index()
 
 
+# كاش للترجمات الناجحة فقط (الفشل مؤقت ويجب إعادة المحاولة): نفس الرسالة لا تستهلك
+# طلبًا جديدًا من حصة OpenRouter. في الذاكرة، ويُفرَّغ جزئيًا عند تجاوز الحد.
+_TRANSLATION_CACHE: dict[str, str] = {}
+_TRANSLATION_CACHE_MAX = 2000
+
+
 def translate_query_for_retrieval(question: str) -> str | None:
     """ترجمة السؤال للغة الأخرى (عربي↔إنجليزي) عبر OpenRouter لتوسيع البحث عبر
     قاعدة معرفة ثنائية اللغة ولرفع فهم رسائل العامية. بدون مزوّد أو عند الفشل
     تُتجاوز (None) — لا يجب أن تُسقط طلب /draft."""
+    key = question.strip()
+    if key in _TRANSLATION_CACHE:
+        return _TRANSLATION_CACHE[key]
     prompt = (
         f"ترجم النص التالي إلى العربية إن كان إنجليزيًا، أو إلى الإنجليزية إن كان عربيًا. "
         f"أعد الترجمة فقط بدون أي شرح إضافي:\n\n{question}"
     )
-    return openrouter_chat([{"role": "user", "content": prompt}], max_tokens=200, task="translate")
+    translation = openrouter_chat([{"role": "user", "content": prompt}], max_tokens=200, task="translate")
+    if translation:
+        if len(_TRANSLATION_CACHE) >= _TRANSLATION_CACHE_MAX:
+            for old in list(_TRANSLATION_CACHE)[: _TRANSLATION_CACHE_MAX // 2]:
+                del _TRANSLATION_CACHE[old]
+        _TRANSLATION_CACHE[key] = translation
+    return translation
 
 
 def retrieve_with_signals(question: str, pool: int = CANDIDATE_POOL, use_translation: bool = True,

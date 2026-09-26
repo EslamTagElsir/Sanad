@@ -25,7 +25,7 @@ def test_anonymous_request_is_rejected_even_without_api_keys(client, method, pat
 
 def test_dev_open_mode_is_off_by_default():
     import os
-    assert os.environ.get("AGENT_ASSIST_DEV_OPEN") == ""
+    assert os.environ.get("SANAD_DEV_OPEN") == ""
     assert service.DEV_OPEN is False
 
 
@@ -122,3 +122,17 @@ def test_submit_ticket_rejects_html_in_email(client):
     # الإيميل يُعرض في لوحة الموظف (حيث يُخزَّن توكن الجلسة) — لا وسوم HTML.
     payload = {"customer_message": "x", "customer_email": "<img/src=x/onerror=alert(1)>@a.bc"}
     assert client.post("/submit-ticket", json=payload).status_code == 422
+
+
+def test_users_from_secret_when_file_missing(client, monkeypatch, tmp_path):
+    """على السيرفر users.json غير مرفوع: الموظفون من الإعداد السري SANAD_USERS_JSON."""
+    import json
+    monkeypatch.setattr(auth, "USERS_PATH", tmp_path / "missing.json")
+    monkeypatch.setenv("SANAD_USERS_JSON", json.dumps([{"username": "ops", "display_name": "Ops", "role": "employee",
+                                                        "password_hash": auth.hash_password(PASSWORD)}]))
+    assert client.post("/login", json={"username": "ops", "password": PASSWORD}).status_code == 200
+
+
+def test_root_redirects_to_app(client):
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code in (302, 307) and resp.headers["location"] == "/app/"

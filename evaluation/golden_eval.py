@@ -10,7 +10,7 @@ evaluation/golden_eval.py — تقييم الاسترجاع والثقة على 
 3. أثر عتبات القرار: نسبة تصعيد الأسئلة خارج النطاق، نسبة التصعيد الخاطئ
    لأسئلة صحيحة، ودقة send_ready.
 
-شغّله من داخل مجلد agent-assist-copilot:
+شغّله من داخل مجلد المشروع (sanad):
     python -m evaluation.golden_eval
 """
 
@@ -27,8 +27,13 @@ from stage2_hybrid.confidence import (
 )
 
 
+def _lang(text: str) -> str:
+    import re
+    return "ar" if len(re.findall(r"[؀-ۿ]", text)) >= len(re.findall(r"[A-Za-z]", text)) else "en"
+
+
 def retrieval_metrics(items: list[dict]) -> dict:
-    hits1, hitsk, rr = [], [], []
+    hits1, hitsk, rr, langs, misses = [], [], [], [], []
     for it in items:
         if not it["in_scope"]:
             continue
@@ -37,7 +42,16 @@ def retrieval_metrics(items: list[dict]) -> dict:
         hits1.append(bool(ranks) and ranks[0] == 0)
         hitsk.append(bool(ranks) and ranks[0] < FINAL_K)
         rr.append(1.0 / (ranks[0] + 1) if ranks else 0.0)
-    return {"hit@1": float(np.mean(hits1)), f"hit@{FINAL_K}": float(np.mean(hitsk)), "mrr": float(np.mean(rr)), "n": len(hits1)}
+        langs.append(_lang(it["question"]))
+        if not hits1[-1]:
+            misses.append(f"{it['id']} → {candidates[0]['source_id']} ({candidates[0]['title'][:50]})")
+    report = {"hit@1": float(np.mean(hits1)), f"hit@{FINAL_K}": float(np.mean(hitsk)), "mrr": float(np.mean(rr)), "n": len(hits1)}
+    for lang in ("ar", "en"):
+        sel = [h for h, l in zip(hits1, langs) if l == lang]
+        report[f"hit@1_{lang}"] = float(np.mean(sel)) if sel else float("nan")
+        report[f"n_{lang}"] = len(sel)
+    report["misses@1"] = misses
+    return report
 
 
 def expected_calibration_error(probs: np.ndarray, labels: np.ndarray, bins: int = 10) -> float:
@@ -80,4 +94,7 @@ if __name__ == "__main__":
     for section, metrics in run().items():
         print(f"\n[{section}]")
         for k, v in metrics.items():
-            print(f"  {k:32s} {v:.3f}" if isinstance(v, float) else f"  {k:32s} {v}")
+            if isinstance(v, list):
+                print(f"  {k}:"); [print(f"    - {x}") for x in v]
+            else:
+                print(f"  {k:32s} {v:.3f}" if isinstance(v, float) else f"  {k:32s} {v}")

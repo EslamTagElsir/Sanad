@@ -22,16 +22,16 @@ import jwt
 
 USERS_PATH = Path(__file__).parent.parent / "data" / "users.json"
 
-# يُقرأ من AGENT_ASSIST_JWT_SECRET في .env. بدونه نولّد سرًا عشوائيًا لكل
+# يُقرأ من SANAD_JWT_SECRET في .env. بدونه نولّد سرًا عشوائيًا لكل
 # تشغيل — كافٍ للتطوير المحلي، لكنه يعني إبطال كل الجلسات عند كل إعادة تشغيل؛
 # لإنتاج حقيقي اضبط قيمة ثابتة وسرية في .env دائمًا.
-JWT_SECRET = os.environ.get("AGENT_ASSIST_JWT_SECRET")
+JWT_SECRET = os.environ.get("SANAD_JWT_SECRET")
 if not JWT_SECRET:
     import secrets
     JWT_SECRET = secrets.token_hex(32)
-    logging.getLogger("agent_copilot").warning("AGENT_ASSIST_JWT_SECRET غير مضبوط: سر مؤقت لهذا التشغيل فقط")
+    logging.getLogger("sanad").warning("SANAD_JWT_SECRET غير مضبوط: سر مؤقت لهذا التشغيل فقط")
 elif len(JWT_SECRET) < 32:
-    logging.getLogger("agent_copilot").warning("AGENT_ASSIST_JWT_SECRET أقصر من 32 حرفًا — استخدم سرًا أطول")
+    logging.getLogger("sanad").warning("SANAD_JWT_SECRET أقصر من 32 حرفًا — استخدم سرًا أطول")
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_SECONDS = 12 * 60 * 60  # 12 ساعة
@@ -45,8 +45,12 @@ _failed_lock = threading.Lock()
 
 
 def load_users() -> list[dict]:
+    """محليًا: data/users.json. على السيرفر (Docker / Hugging Face Spaces) الملف غير
+    مرفوع عمدًا (فيه تجزئات كلمات المرور)، فيُقرأ من الإعداد السري SANAD_USERS_JSON
+    بنفس الصيغة (يولّده: python -m stage4_production.manage_users add ...)."""
     if not USERS_PATH.exists():
-        return []
+        raw = os.environ.get("SANAD_USERS_JSON", "").strip()
+        return json.loads(raw) if raw else []
     with open(USERS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 

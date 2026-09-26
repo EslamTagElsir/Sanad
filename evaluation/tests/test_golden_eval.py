@@ -9,6 +9,8 @@ from evaluation.golden_eval import run, expected_calibration_error
 from stage2_hybrid import confidence, rag
 from stage2_hybrid.confidence import ESCALATE_BELOW, load_golden
 from stage2_hybrid.rag import retrieve_with_signals
+# الدالة الأصلية قبل أن يستبدلها conftest بالترجمات المحفوظة
+from stage2_hybrid.rag import translate_query_for_retrieval as _original_translate
 from stage4_production import service
 from stage4_production.service import decide_action
 from evaluation.tests.conftest import bearer
@@ -76,8 +78,10 @@ def test_ece_helper():
 def test_screenshot_case_is_no_longer_zero_confidence():
     """الحالة التي ظهرت في الواجهة بثقة 0% وتصعيد، رغم وجود مقالة وسابقة مطابقتين."""
     candidates, signals = retrieve_with_signals(SCREENSHOT_MESSAGE)  # ترجمة محفوظة بدل LLM (conftest)
-    assert candidates[0]["source_id"] in {"kb_failed_transfer", "ticket_1042", "kb_refund_policy"}
-    conf = confidence.get_model().predict(SCREENSHOT_MESSAGE, candidates[0], signals)
+    # المصدر الأول قد يكون مقالة/سابقة أو قطعة من دليل السياسات تشرح نفس السياسة
+    assert confidence.is_correct_source(candidates[0], ["kb_failed_transfer", "ticket_1042", "kb_refund_policy"])
+    # نفس حساب الخدمة: أعلى ثقة بين المصادر النهائية المعروضة (service.handle_request)
+    conf = max(confidence.get_model().predict(SCREENSHOT_MESSAGE, c, signals) for c in candidates[:rag.FINAL_K])
     assert conf >= ESCALATE_BELOW
     assert decide_action(conf, candidates[0]) != "escalate"
 
@@ -92,7 +96,8 @@ def test_screenshot_case_through_api(client):
 @pytest.mark.parametrize("q", ["do you sell iPhones?", "ايه رأيك في ماتش الاهلي امبارح"])
 def test_out_of_scope_escalates_through_api(client, q):
     body = client.post("/draft", json={"customer_message": q}, headers=bearer("sara.ahmed")).json()
-    assert body["action"] == "escalate" and body["citations"] == []
+    assert body["action"] == "escalate"
+    assert body["draft"] == "" and body["reason"]   # لا مسودة، مع سبب واضح للموظف
 
 
 def test_confidence_is_a_probability():
@@ -119,23 +124,6 @@ def test_second_screenshot_case_through_api(client):
     body = client.post("/draft", json={"customer_message": SECOND_SCREENSHOT_MESSAGE},
                        headers=bearer("sara.ahmed")).json()
     assert body["action"] in ("needs_review", "send_ready"), body
-
-
-@pytest.mark.parametrize("raw,expected", [
-    ("نعم", True), ("نعم.", True), ("Yes", True), ("لا", False), ("No.", False),
-    (None, None), ("", None), ("   ", None), ("ربما", None),
-])
-def test_scope_check_answer_parsing(raw, expected):
-    assert service._parse_yes_no(raw) is expected
-
-
-def test_empty_llm_answer_does_not_force_escalation(client, monkeypatch):
-    """نموذج OpenRouter رجّع content=None (نموذج تفكير + max_tokens صغير)؛ ده
-    كان بيتحسب "لا" ويصعّد. دلوقتي الرد الفارغ = بلا رأي، ويبقى قرار الثقة."""
-    monkeypatch.setattr(service, "_llm_scope_check", lambda q, chunks: None)
-    monkeypatch.setattr(service, "ESCALATE_BELOW", 0.0)
-    body = client.post("/draft", json={"customer_message": SCREENSHOT_MESSAGE}, headers=bearer("sara.ahmed")).json()
-    assert body["action"] != "escalate"
 
 
 def test_draft_request_ignores_legacy_queue_field(client):
@@ -226,3 +214,50 @@ def test_daily_quota_exhaustion_short_circuits_later_calls(monkeypatch):
     assert common._quota_blocked_until == pytest.approx(reset_ms / 1000)
     assert common.openrouter_chat([{"role": "user", "content": "x"}], 5, "t") is None
     assert len(calls) == 1
+
+
+def test_policy_manual_pdf_is_indexed_with_clean_arabic():
+    """دليل السياسات يُستخرج من الـ PDF: فصول بأسماء صحيحة، ونص عربي بالترتيب
+    المنطقي (لا "خلال%90 في")، ومراجع كل قسم لمقالته."""
+    manual = [c for c in rag.load_index()["chunks"] if c["source_type"] == "manual"]
+    assert len(manual) > 50
+    chapters = {c["title"].split(" — ")[0] for c in manual}
+    assert "5. الرسوم والعمولات" in chapters and len(chapters) == 22
+    policy = next(c for c in manual if c["title"].endswith("6.2 السياسة المعتمدة"))
+    assert "في 90% من الحالات يرد المبلغ تلقائيا خلال ساعتين" in policy["text"]
+    assert policy["refs"] == ["kb_failed_transfer", "kb_refund_policy"]
+    frozen = next(c for c in manual if "18.5 حساب مجمد" in c["title"])
+    assert frozen["refs"] == ["kb_account_freeze"]
+
+
+def test_escalation_shows_sources_and_translation_reason(client, monkeypatch):
+    """لقطة الشاشة: الترجمة فشلت فانخفضت الثقة وصُعّدت الحالة، والواجهة قالت
+    "لا يوجد مصدر مناسب" رغم أن المصادر الصحيحة استُرجعت. الآن: لا مسودة، لكن
+    المصادر تظهر مع سبب يذكر فشل الترجمة، والنتيجة لا تُخزَّن في الكاش."""
+    from stage4_production import service
+    msg = "الفلوس م جاتش علي الحساب بتاعي"
+    monkeypatch.setattr(rag, "translate_query_for_retrieval", lambda q: None)
+    monkeypatch.setattr(service.common, "get_openrouter_client", lambda: object())  # مزوّد مُهيَّأ لكنه فشل
+    body = client.post("/draft", json={"customer_message": msg}, headers=bearer("sara.ahmed")).json()
+    assert body["action"] == "escalate" and body["draft"] == ""
+    assert body["citations"], "المصادر يجب أن تظهر للموظف حتى عند التصعيد"
+    assert "الترجمة" in body["reason"]
+    again = client.post("/draft", json={"customer_message": msg}, headers=bearer("sara.ahmed")).json()
+    assert again["cached"] is False   # فشل مؤقت لا يُخزَّن
+
+
+def test_translation_cache_avoids_repeat_llm_calls(monkeypatch):
+    """نفس الرسالة لا تستهلك طلب ترجمة جديدًا، والفشل لا يُخزَّن."""
+    calls = []
+    answers = iter([None, "The money did not arrive"])   # فشل ثم نجاح
+
+    def fake_chat(messages, max_tokens, task):
+        calls.append(task)
+        return next(answers)
+
+    monkeypatch.setattr(rag, "openrouter_chat", fake_chat)
+    monkeypatch.setattr(rag, "_TRANSLATION_CACHE", {})
+    assert _original_translate("رسالة") is None                      # فشل: لا يُخزَّن
+    assert _original_translate("رسالة") == "The money did not arrive"  # إعادة محاولة
+    assert _original_translate("رسالة") == "The money did not arrive"  # من الكاش
+    assert calls == ["translate", "translate"]

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>الرد على أسئلة الدعم</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Cairo',system-ui,sans-serif;background:#F7F7F5;color:#20241F;min-height:100vh;display:flex;flex-direction:column;}
+  header{padding:22px 24px 16px;border-bottom:1px solid #E5E5E0;background:#FFFFFF;}
+  header .eyebrow{font-size:13px;color:#9A9D95;} header .title{font-size:17px;font-weight:700;margin-top:2px;}
+  main{flex-grow:1;padding:32px 24px;display:flex;flex-direction:column;max-width:480px;width:100%;margin:0 auto;}
+  h1{font-size:20px;font-weight:700;margin:0 0 8px;}
+  .sub{font-size:14px;color:#6B6F68;line-height:1.6;margin-bottom:18px;}
+  .questions{background:#FFFFFF;border:1px solid #E5E5E0;border-radius:14px;padding:16px 18px;font-size:14px;line-height:1.9;white-space:pre-line;margin-bottom:20px;}
+  label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;}
+  textarea{width:100%;padding:14px 16px;border-radius:14px;border:1px solid #E5E5E0;background:#FFFFFF;font-family:'Cairo',sans-serif;font-size:14px;margin-bottom:16px;min-height:150px;resize:vertical;line-height:1.7;}
+  textarea:focus,button:focus-visible{outline:2px solid #0F3D3E;outline-offset:2px;}
+  button{width:100%;padding:15px;border-radius:14px;border:none;background:#0F3D3E;color:#fff;font-family:'Cairo',sans-serif;font-size:15px;font-weight:700;cursor:pointer;}
+  button:hover{background:#0B2E2F;} button:disabled{opacity:.6;cursor:not-allowed;}
+  .note{font-size:12px;color:#9A9D95;text-align:center;margin-top:12px;line-height:1.6;}
+  .error{color:#C0392B;font-size:13px;margin:-6px 0 14px;}
+  .state{flex-grow:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;font-size:15px;color:#6B6F68;line-height:1.7;}
+  .state strong{font-size:19px;color:#20241F;}
+  .check-circle{width:64px;height:64px;border-radius:50%;background:#EAF2F1;display:flex;align-items:center;justify-content:center;}
+  [hidden]{display:none !important;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">محفظتك الرقمية</div>
+  <div class="title">الدعم الفني</div>
+</header>
+
+<main>
+  <div id="loading" class="state">جاري التحميل...</div>
+
+  <form id="replyForm" hidden>
+    <h1>محتاجين شوية تفاصيل</h1>
+    <p class="sub">عشان نقدر نساعدك بدقة، ياريت ترد على الأسئلة دي:</p>
+    <div class="questions" id="questions"></div>
+
+    <label for="message">ردك</label>
+    <textarea id="message" required placeholder="اكتب إجابتك هنا..."></textarea>
+
+    <div id="formError" class="error" hidden></div>
+    <button type="submit" id="submitBtn">إرسال الرد</button>
+    <div class="note">متكتبش كود التحقق أو كلمة السر أو رقم البطاقة — فريقنا مش هيطلبهم منك أبدًا.</div>
+  </form>
+
+  <div id="done" class="state" hidden>
+    <div class="check-circle">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0F3D3E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    </div>
+    <strong>تم استلام ردك</strong>
+    <span>هيراجعه أحد موظفي الدعم ويرد عليك بالإيميل.</span>
+  </div>
+
+  <div id="closed" class="state" hidden>
+    <strong>الرابط ده مش متاح للرد</strong>
+    <span id="closedText"></span>
+  </div>
+</main>
+
+<script>
+const token = new URLSearchParams(location.search).get('t') || '';
+
+function show(id) {
+  ['loading', 'replyForm', 'done', 'closed'].forEach((x) => { document.getElementById(x).hidden = x !== id; });
+}
+function closed(text) {
+  document.getElementById('closedText').textContent = text;
+  show('closed');
+}
+
+async function load() {
+  if (!token) return closed('الرابط غير مكتمل. افتح الرابط كما وصلك في الإيميل.');
+  try {
+    const resp = await fetch('/reply/' + encodeURIComponent(token));
+    if (!resp.ok) return closed('الرابط غير صالح أو منتهي.');
+    const body = await resp.json();
+    if (!body.can_reply) return closed('تم استلام ردك بالفعل، وسيتواصل معك أحد موظفي الدعم.');
+    document.getElementById('questions').textContent = body.questions;   // textContent: لا HTML
+    show('replyForm');
+  } catch (err) {
+    closed('تعذّر الاتصال بالخادم، حاول مرة تانية بعد شوية.');
+  }
+}
+
+document.getElementById('replyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const errBox = document.getElementById('formError');
+  errBox.hidden = true;
+  btn.disabled = true;
+  btn.textContent = '...جاري الإرسال';
+  try {
+    const resp = await fetch('/reply/' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: document.getElementById('message').value.trim() })
+    });
+    if (resp.ok) return show('done');
+    const body = await resp.json().catch(() => ({}));
+    if (resp.status === 409) return closed(body.detail || 'تم استلام ردك بالفعل.');
+    errBox.textContent = typeof body.detail === 'string' ? body.detail : 'حصل خطأ، حاول تاني';
+    errBox.hidden = false;
+  } catch (err) {
+    errBox.textContent = 'تعذّر الاتصال بالخادم';
+    errBox.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'إرسال الرد';
+  }
+});
+
+load();
+</script>
+</body>
+</html>

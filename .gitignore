@@ -6,3 +6,5 @@ __pycache__/
 stage2_hybrid/store/
 stage2_hybrid/store_large/
 data/users.json
+logs/
+data/tickets.db

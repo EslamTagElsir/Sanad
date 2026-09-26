@@ -5,9 +5,9 @@ stage2_hybrid/embeddings.py — نموذج الـ embedding الدلالي
 مطابقة كلمات): يفهم أن "حولت فلوس ومش واصلة" و"فشل التحويل" و"transfer failed"
 نفس المعنى بدون أي قواميس يدوية.
 
-النموذج يُحدَّد عبر AGENT_ASSIST_EMBED_MODEL (الافتراضي Qwen/Qwen3-Embedding-0.6B،
+النموذج يُحدَّد عبر SANAD_EMBED_MODEL (الافتراضي Qwen/Qwen3-Embedding-0.6B،
 الأفضل على المجموعة الذهبية — راجع evaluation/compare_embedders.py).
-AGENT_ASSIST_EMBED_DEVICE=cpu/cuda لفرض جهاز؛ الافتراضي تلقائي مع رجوع للـ CPU.
+SANAD_EMBED_DEVICE=cpu/cuda لفرض جهاز؛ الافتراضي تلقائي مع رجوع للـ CPU.
 """
 
 import logging
@@ -17,14 +17,14 @@ from typing import List
 import numpy as np
 
 DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-logger = logging.getLogger("agent_copilot")
+logger = logging.getLogger("sanad")
 
 
 class Embedder:
     def __init__(self, model_name: str):
         from sentence_transformers import SentenceTransformer
         self.model_name = model_name
-        device = os.environ.get("AGENT_ASSIST_EMBED_DEVICE") or None
+        device = os.environ.get("SANAD_EMBED_DEVICE") or None
         try:
             # من الكاش المحلي أولًا (بدون شبكة)؛ التحميل من الإنترنت فقط إن لم يوجد.
             self.model = SentenceTransformer(model_name, local_files_only=True, device=device)
@@ -57,7 +57,7 @@ _EMBEDDERS: dict[str, Embedder] = {}
 def get_embedder() -> Embedder:
     """نسخة واحدة من النموذج لكل اسم (تحميله مكلف). فشل التحميل يرفع استثناء:
     بدون نموذج لا يوجد استرجاع أصلًا، فالأفضل أن تفشل الخدمة عند البدء بوضوح."""
-    name = os.environ.get("AGENT_ASSIST_EMBED_MODEL", "").strip() or DEFAULT_MODEL
+    name = os.environ.get("SANAD_EMBED_MODEL", "").strip() or DEFAULT_MODEL
     if name not in _EMBEDDERS:
         _EMBEDDERS[name] = Embedder(name)
     return _EMBEDDERS[name]

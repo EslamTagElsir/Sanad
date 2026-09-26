@@ -25,7 +25,7 @@ from stage2_hybrid.rag import retrieve_with_signals
 
 GOLDEN_PATH = Path(__file__).parent.parent / "data" / "golden_set.json"
 TRANSLATIONS_PATH = Path(__file__).parent.parent / "data" / "golden_translations.json"
-logger = logging.getLogger("agent_copilot")
+logger = logging.getLogger("sanad")
 
 # عتبات القرار على الاحتمال المعايَر (لا على نسبة كلمات): أقل من ESCALATE_BELOW
 # = الأرجح أن أول مصدر خطأ أو لا يوجد مصدر مناسب → تصعيد. أعلى من

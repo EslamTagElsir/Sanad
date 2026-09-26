@@ -1,18 +1,24 @@
+# نسخ مثبّتة = النسخ المجرَّبة فعليًا (كل التقييمات والاختبارات عليها). بدون تثبيت
+# النسخ، أي بناء جديد (Docker / Hugging Face Spaces) قد يسحب نسخة أحدث تكسر شيئًا.
 # الاسترجاع بنموذج embedding محلي (Qwen3-Embedding-0.6B افتراضيًا، راجع
-# stage2_hybrid/embeddings.py). لحجم بيانات أكبر أضف vector DB:
-#   qdrant-client أو psycopg[binary] (pgvector) حسب المسار المختار
+# stage2_hybrid/embeddings.py). لحجم بيانات أكبر أضف vector DB (qdrant / pgvector).
 
-sentence-transformers  # نموذج الـ embedding
-torch
-numpy
-scikit-learn  # Logistic Regression لمعايرة الثقة — راجع stage2_hybrid/confidence.py
-anthropic
-openai  # عميل OpenRouter (واجهة متوافقة) — كل مهام الـ LLM، راجع common.openrouter_chat
-python-dotenv  # تحميل مفاتيح .env تلقائيًا — راجع common.py
-pyjwt  # تسجيل دخول حقيقي (JWT) — راجع stage4_production/auth.py
-bcrypt  # تجزئة كلمات المرور
-sendgrid  # إرسال الرد فعليًا بالإيميل للعميل — راجع stage4_production/email_service.py
-fastapi
-uvicorn[standard]
-httpx
-pytest
+sentence-transformers==6.1.0  # نموذج الـ embedding
+transformers==5.17.0
+tokenizers==0.23.2
+safetensors==0.8.0
+torch==2.14.0                 # في Docker تُثبَّت نسخة الـ CPU فقط (أصغر بكثير)
+numpy==2.5.3
+pymupdf==1.28.2               # استخراج نص دليل السياسات من الـ PDF (رخصة AGPL) — راجع common.load_policy_manual_sections
+scikit-learn==1.9.1           # Logistic Regression لمعايرة الثقة — راجع stage2_hybrid/confidence.py
+openai==3.17.0                # عميل OpenRouter (واجهة متوافقة) — كل مهام الـ LLM، راجع common.openrouter_chat
+anthropic==1.7.0
+python-dotenv==1.2.3          # تحميل مفاتيح .env تلقائيًا — راجع common.py
+PyJWT==2.14.0                 # تسجيل دخول حقيقي (JWT) — راجع stage4_production/auth.py
+bcrypt==5.0.0                 # تجزئة كلمات المرور
+sendgrid==6.12.5              # إرسال الرد فعليًا بالإيميل للعميل — راجع stage4_production/email_service.py
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn[standard]==0.53.0
+httpx==0.28.1
+pytest==9.1.1

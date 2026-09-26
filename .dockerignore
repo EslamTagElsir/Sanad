@@ -1,0 +1,16 @@
+# أسرار وبيانات محلية: لا تدخل الصورة أبدًا
+.env
+.env.*
+!.env.example
+data/users.json
+data/tickets.db
+logs/
+
+# ملفات مولَّدة تُعاد بناؤها داخل الحاوية
+__pycache__/
+*.pyc
+stage2_hybrid/store/
+stage2_hybrid/store_large/
+.git/
+run.bat
+stop.bat

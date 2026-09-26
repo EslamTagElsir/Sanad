@@ -85,7 +85,7 @@ def main(with_llm: bool):
         from fastapi.testclient import TestClient
         from stage4_production import service, auth
         handler = _OpenRouterLog()
-        logging.getLogger("agent_copilot").addHandler(handler)
+        logging.getLogger("sanad").addHandler(handler)
         drafts = []
         with TestClient(service.app) as c:
             user = next(u for u in auth.load_users() if u["role"] == "employee")

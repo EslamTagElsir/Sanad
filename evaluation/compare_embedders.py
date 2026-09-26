@@ -33,7 +33,7 @@ print("REPORT" + json.dumps(report))
 
 
 def evaluate(model: str) -> dict:
-    env = {**os.environ, "AGENT_ASSIST_EMBED_MODEL": model, "OPENROUTER_API_KEY": "",
+    env = {**os.environ, "SANAD_EMBED_MODEL": model, "OPENROUTER_API_KEY": "",
            "TRANSFORMERS_VERBOSITY": "error"}
     with tempfile.TemporaryDirectory() as store:
         out = subprocess.run([sys.executable, "-c", _CHILD.format(root=str(ROOT), store=store)],

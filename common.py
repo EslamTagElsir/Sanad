@@ -1,5 +1,5 @@
 """
-common.py — أدوات مشتركة لمشروع Agent-Assist Copilot
+common.py — أدوات مشتركة لمشروع Sanad
 -------------------------------------------------------
 الفرق الجوهري عن مشروع RAG التعليمي السابق: هذا النظام لا يجيب المستخدم النهائي
 مباشرة. هو يكتب "مسودة رد" (Draft) تُعرض على موظف دعم بشري يراجعها ويعدّلها قبل
@@ -26,10 +26,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATA_DIR = Path(__file__).parent / "data"
-# دليل سياسات الشركة وإجراءات الدعم: الـ PDF (docs/company_policies.pdf) مولَّد من
-# هذا الـ HTML، فنفهرس المصدر مباشرة — يحافظ على الفصول والعناوين والجداول بدقة
-# أكبر من استخراج نص الـ PDF.
-POLICY_MANUAL_PATH = Path(__file__).parent / "docs" / "company_policies.html"
+# دليل سياسات الشركة وإجراءات الدعم — يُستخرج نصه من ملف الـ PDF نفسه.
+POLICY_MANUAL_PATH = Path(__file__).parent / "docs" / "company_policies.pdf"
 
 # نوع كل مصدر كما يُعرض للنموذج في الـ prompt (والواجهة تعرض مقابله للموظف).
 SOURCE_KIND = {
@@ -99,69 +97,134 @@ def build_kb_chunks(kb_articles: List[Dict]) -> List[Dict]:
 _SOURCE_REF_RE = re.compile(r"\b(?:kb_[a-z_]+|ticket_\d+)\b")
 
 
+_ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+_LATIN_OR_DIGIT_RE = re.compile(r"[A-Za-z0-9]")
+_TANWEEN_RE = re.compile(r"\s*[\u064B-\u064D]")          # تنوين: ينتمي لآخر الكلمة السابقة
+_HARAKAT_RE = re.compile(r"[\u064E-\u0652]")              # فتحة/ضمة/كسرة/شدة/سكون
+_LEADING_PUNCT_RE = re.compile(r"^([.,:;!?،؛؟»«]+)(.+)$")
+_PDF_CELL_GAP_PT = 30   # فجوة أفقية أكبر من هذا بين كلمتين في نفس السطر = حدود خانة جدول
+
+
+def _rebuild_pdf_line(words: List[tuple]) -> str:
+    """يعيد بناء سطر من كلماته ومواضعها [(x0, x1, text)] بالترتيب المنطقي.
+
+    الـ PDF يخزّن النص بترتيب العرض المرئي، فاستخراجه كما هو يقلب ترتيب الكلمات
+    حول الأرقام والكلمات اللاتينية ("خلال%90 في" بدل "في 90% ... خلال").
+    الحل: ترتيب الكلمات من اليمين لليسار في الأسطر العربية، مع إعادة أي تسلسل
+    لاتيني/أرقام متتالي لاتجاهه الطبيعي، ونقل علامات الترقيم لمكانها، وتصحيح
+    الأقواس المعكوسة و"%90" ← "90%"، وحذف التشكيل المستخرج منفصلًا ("جذر ًيا").
+    رموز المراجع (kb_..., ticket_...) لا تُحتسب في تحديد اتجاه السطر."""
+    counted = [w for w in words if not _SOURCE_REF_RE.fullmatch(w[2])]
+    ar = sum(len(_ARABIC_RE.findall(w[2])) for w in counted)
+    lat = sum(len(_LATIN_OR_DIGIT_RE.findall(w[2])) for w in counted)
+    if ar < lat:                                               # سطر لاتيني: يسار ← يمين
+        return " ".join(w[2] for w in sorted(words, key=lambda w: w[0]))
+
+    tokens, run = [], []                                       # run = تسلسل لاتيني/أرقام متتالي
+    def flush_run():
+        if run:
+            tokens.append((" ".join(t for _, _, t in reversed(run)), run[-1][0], run[0][1]))
+            run.clear()
+    for x0, x1, t in sorted(words, key=lambda w: -w[1]):      # سطر عربي: يمين ← يسار
+        if _ARABIC_RE.search(t):
+            flush_run()
+            m = _LEADING_PUNCT_RE.match(t)
+            tokens.append((m.group(2) + m.group(1) if m else t, x0, x1))
+        else:
+            run.append((x0, x1, t))
+    flush_run()
+
+    parts, prev_left = [], None
+    for t, left, right in tokens:
+        if prev_left is not None:
+            parts.append(" | " if prev_left - right > _PDF_CELL_GAP_PT else " ")
+        parts.append(t)
+        prev_left = left
+    text = "".join(parts).translate(str.maketrans("()", ")("))
+    text = re.sub(r"%(\d[\d,.]*)", r"\1%", text)
+    text = _HARAKAT_RE.sub("", _TANWEEN_RE.sub("", text))
+    text = re.sub(r"\s+([.,:;!?،؛؟)])", r"\1", text)
+    # حرف العطف المتصل ينفصل عن كلمته عند حذف الحركة ("و ُيرد" ← "و يرد" ← "ويرد")
+    text = re.sub(r"(?<![\u0600-\u06FF])([وف]) (?=[\u0600-\u06FF])", r"\1", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _fix_chapter_heading(text: str) -> str:
+    """". 6 التحويلات الفاشلة" ← "6. التحويلات الفاشلة". الأقواس تُحذف من عناوين
+    الفصول لأن موضعها حول رقم الفصل لا يُستعاد بدقة من ترتيب العرض."""
+    text = re.sub(r"\s{2,}", " ", re.sub(r"[()|]", " ", text)).strip()
+    m = re.match(r"^\.?\s*(\d+)\s*\.?\s+(.*)$", text)
+    return f"{m.group(1)}. {m.group(2)}" if m else text
+
+
 def load_policy_manual_sections(path: Path = POLICY_MANUAL_PATH) -> List[Dict]:
-    """يقسّم دليل السياسات إلى أقسام: كل عنوان h2 داخل فصل (h1.chapter) قسم،
-    ومقدمة الفصل قبل أول h2 قسم مستقل. الغلاف والفهرس (قبل أول فصل) مُستبعدان.
-    الجداول تُحوَّل لأسطر "خلية | خلية" حتى تبقى الصفوف مفهومة للنموذج."""
-    from html.parser import HTMLParser
-
-    class Parser(HTMLParser):
-        BLOCK_END = {"p", "li", "tr", "div", "h3", "h4", "span"}
-
-        def __init__(self):
-            super().__init__()
-            self.sections, self.chapter, self.heading = [], None, None
-            self.buf, self.capture, self.skip = [], None, 0
-
-        def flush(self):
-            text = re.sub(r"[ \t]+", " ", "".join(self.buf))
-            text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
-            if self.chapter and text:
-                self.sections.append({"chapter": self.chapter, "heading": self.heading, "text": text})
-            self.buf = []
-
-        def handle_starttag(self, tag, attrs):
-            cls = dict(attrs).get("class") or ""
-            if tag in ("style", "title", "script"):
-                self.skip += 1
-            elif tag == "h1" and "chapter" in cls:
-                self.flush(); self.capture, self.chapter, self.heading = "chapter", "", None
-            elif tag == "h2" and self.chapter:
-                self.flush(); self.capture, self.heading = "heading", ""
-            elif tag in ("td", "th"):
-                self.buf.append(" | " if self.buf and not self.buf[-1].endswith("\n") else "")
-
-        def handle_endtag(self, tag):
-            if tag in ("style", "title", "script"):
-                self.skip -= 1
-            elif tag in ("h1", "h2") and self.capture:
-                self.capture = None
-            elif tag in self.BLOCK_END:
-                self.buf.append("\n")
-
-        def handle_data(self, data):
-            if self.skip:
-                return
-            if self.capture == "chapter":
-                self.chapter += data.strip()
-            elif self.capture == "heading":
-                self.heading += data.strip()
-            elif self.chapter:
-                self.buf.append(data)
-
+    """يستخرج نص دليل السياسات من الـ PDF (عبر PyMuPDF) ويقسّمه لأقسام حسب حجم
+    الخط: عنوان فصل (~21pt) يبدأ فصلًا، وعنوان قسم (~14.5pt) أو قسم فرعي
+    (~12.5pt، مثل كل قالب رد وكل شجرة قرار) يبدأ قسمًا داخله، ومقدمة الفصل قبل
+    أول قسم قسم مستقل. الغلاف والفهرس (قبل أول فصل) مُستبعدان.
+    كل سطر يُعاد بناؤه من كلماته ومواضعها (_rebuild_pdf_line) لتصحيح ترتيب العربي."""
     if not path.exists():
         return []
-    parser = Parser()
-    parser.feed(path.read_text(encoding="utf-8"))
-    parser.flush()
-    return parser.sections
+    import pymupdf
+
+    sections: List[Dict] = []
+    chapter, heading, heading_refs, lines = None, None, [], []
+    prev_kind = None   # نوع السطر السابق: عنوان فصل/قسم يمتد أحيانًا على سطرين
+
+    def flush():
+        text = "\n".join(l for l in lines if l)
+        if chapter and text:
+            sections.append({"chapter": chapter, "heading": heading, "heading_refs": heading_refs, "text": text})
+        lines.clear()
+
+    with pymupdf.open(path) as doc:
+        for page in doc:
+            # حجم الخط لكل سطر من "dict"، والكلمات بمواضعها من "words" (نفس ترقيم block/line)
+            sizes = {(bi, li): max(sp["size"] for sp in line["spans"])
+                     for bi, block in enumerate(page.get_text("dict")["blocks"])
+                     for li, line in enumerate(block.get("lines", [])) if line["spans"]}
+            by_line: Dict[tuple, List[tuple]] = {}
+            for x0, _, x1, _, word, bno, lno, _ in page.get_text("words"):
+                by_line.setdefault((bno, lno), []).append((x0, x1, word))
+            for key, words in by_line.items():
+                size = sizes.get(key, 0)
+                refs = [w[2] for w in words if _SOURCE_REF_RE.fullmatch(w[2])]
+                text = _rebuild_pdf_line([w for w in words if not _SOURCE_REF_RE.fullmatch(w[2])]).replace(" | ", " ")
+                if size >= 19.5:                                       # عنوان فصل
+                    if prev_kind == "chapter" and chapter:             # تكملة عنوان على سطرين
+                        chapter = _fix_chapter_heading(f"{chapter} {text}")
+                    elif re.search(r"\d", text):
+                        flush()
+                        chapter, heading, heading_refs = _fix_chapter_heading(text), None, []
+                    else:                                              # "المحتويات": ليس فصلًا
+                        flush()
+                        chapter = None
+                    prev_kind = "chapter"
+                elif chapter and 12 <= size < 16:                      # عنوان قسم/قسم فرعي
+                    if prev_kind == "heading":
+                        heading, heading_refs = f"{heading} {text}", heading_refs + refs
+                    else:
+                        flush()
+                        heading, heading_refs = text, refs
+                    prev_kind = "heading"
+                elif chapter:
+                    lines.append(_rebuild_pdf_line(words))            # المراجع تبقى للـ LLM
+                    prev_kind = "body"
+        flush()
+    return sections
 
 
 def build_manual_chunks(sections: List[Dict]) -> List[Dict]:
-    """قطع دليل السياسات. refs = مراجع قاعدة المعرفة/التذاكر المذكورة داخل القطعة
-    نفسها (مثل kb_failed_transfer) — تُستخدم في التقييم لاعتبار قطعة الدليل التي
-    تشرح نفس السياسة إجابة صحيحة. رموز المراجع تُحذف من نص الـ embedding لأنها
-    ضوضاء للنموذج الدلالي، وتبقى في النص المعروض للـ LLM."""
+    """قطع دليل السياسات. refs = مقالات قاعدة المعرفة التي يشرحها قسم القطعة:
+    مراجع عنوان القسم نفسه إن وُجدت (مثل "18.5 حساب مجمد kb_account_freeze")،
+    وإلا مراجع عناوين أقسام الفصل كله (مثل "6.2 السياسة المعتمدة kb_failed_transfer")
+    — لا من ذكر عابر داخل النص كمثال. تُستخدم في التقييم
+    لاعتبار قطعة الدليل التي تشرح نفس السياسة إجابة صحيحة. رموز المراجع تُحذف من
+    نص الـ embedding لأنها ضوضاء للنموذج الدلالي، وتبقى في النص المعروض للـ LLM."""
+    chapter_refs: Dict[str, set] = {}
+    for sec in sections:
+        chapter_refs.setdefault(sec["chapter"], set()).update(
+            r for r in sec.get("heading_refs", []) if r.startswith("kb_"))
     chunks = []
     for i, sec in enumerate(sections):
         title = f"{sec['chapter']} — {sec['heading']}" if sec["heading"] else sec["chapter"]
@@ -176,7 +239,8 @@ def build_manual_chunks(sections: List[Dict]) -> List[Dict]:
                 "language": "ar",
                 "text": piece,
                 "embed_text": f"{title}. {clean}",
-                "refs": sorted(set(_SOURCE_REF_RE.findall(piece))),
+                "refs": sorted({r for r in sec.get("heading_refs", []) if r.startswith("kb_")}
+                               or chapter_refs[sec["chapter"]]),
             })
     return chunks
 
@@ -213,14 +277,15 @@ def get_anthropic_client():
 # OpenRouter (https://openrouter.ai، واجهة متوافقة مع OpenAI). مُفعَّل فقط عند
 # توفر OPENROUTER_API_KEY.
 #
-# OPENROUTER_MODELS: قائمة موديلات مفصولة بفواصل بترتيب الأفضلية. تُرسل كلها في
-# طلب واحد عبر خاصية "models" في OpenRouter، فيتحوّل تلقائيًا للموديل التالي لو
-# الأول مضغوط (429) أو فشل — بدون طلبات إضافية من عندنا.
-# الافتراضي: موديلات محددة أعطت ترجمة ومسودات عربية جيدة وسريعة في القياس
-# (evaluation/benchmark_latency.py)، ثم "openrouter/free" كاحتياطي أخير فقط —
-# الموجّه العشوائي اختار أحيانًا موديلات غير مناسبة (موديل برمجة رجّع مسودة
-# فارغة بعد 36s، وموديل فلترة محتوى للترتيب).
-DEFAULT_OPENROUTER_MODELS = ["inclusionai/ling-3.0-flash-fin:free", "nex-agi/nex-n2.5-mini:free", "openrouter/free"]
+# OPENROUTER_MODELS: الموديل المستخدم لكل المهام. يقبل قائمة مفصولة بفواصل (تُرسل
+# عبر خاصية "models" في OpenRouter فيتحوّل للتالي عند الفشل)، لكن الإعداد الحالي
+# موديل واحد عمدًا: الاحتياطيات المجانية كانت تُشال أو تصير مدفوعة بلا تنبيه
+# (nex-n2.5-mini:free ← 404، glm-5.2:free ← مدفوع فقط)، والموجّه openrouter/free
+# كان يختار موديلات غير مناسبة (موديل برمجة، موديل فلترة محتوى).
+# ling-3.0-flash-fin:free: الوحيد الذي نجح في المهام الثلاث في قياس 2026-09-26
+# (ترجمة 1.5s، ترتيب 1.9s، مسودة 2.7s بلا أرقام مخترعة)، ونسخته "fin" مالية.
+# إن توقف: تتصعّد الحالات بدل المسودات حتى يُغيَّر الموديل هنا أو في .env.
+DEFAULT_OPENROUTER_MODELS = ["inclusionai/ling-3.0-flash-fin:free"]
 # مهلة قصيرة وبدون إعادة محاولة من عندنا: الموديلات المجانية سرعتها متذبذبة جدًا
 # (1–80 ثانية لنفس الطلب)، وOpenRouter نفسه يتحوّل للموديل التالي في القائمة عند
 # الخطأ. الأفضل أن نكمل بالسلوك الاحتياطي من أن ينتظر الموظف دقيقتين.
@@ -290,21 +355,21 @@ def openrouter_chat(messages: List[Dict], max_tokens: int, task: str) -> str | N
     except Exception as exc:
         if isinstance(exc, openai.RateLimitError) and "per-day" in str(exc):
             _quota_blocked_until = _daily_reset_epoch(exc)
-            logging.getLogger("agent_copilot").warning(
+            logging.getLogger("sanad").warning(
                 f"OPENROUTER | الحصة اليومية نفدت — إيقاف الطلبات حتى {time.strftime('%Y-%m-%d %H:%M', time.localtime(_quota_blocked_until))}")
-        logging.getLogger("agent_copilot").warning(
+        logging.getLogger("sanad").warning(
             f"OPENROUTER | task={task} | failed after {(time.perf_counter() - started) * 1000:.0f}ms | {type(exc).__name__}: {exc}")
         return None
     content = (response.choices[0].message.content or "").strip()
-    logging.getLogger("agent_copilot").info(
+    logging.getLogger("sanad").info(
         f"OPENROUTER | task={task} | model={response.model} | {(time.perf_counter() - started) * 1000:.0f}ms | chars={len(content)}")
     if not content:
-        logging.getLogger("agent_copilot").warning(f"OpenRouter رجّع ردًا فارغًا في مهمة {task} (موديل {response.model})")
+        logging.getLogger("sanad").warning(f"OpenRouter رجّع ردًا فارغًا في مهمة {task} (موديل {response.model})")
         return None
     return content
 
 
-AGENT_ASSIST_SYSTEM_PROMPT = """أنت مساعد داخلي يكتب مسودة رد لموظف دعم بشري سيراجعها قبل إرسالها للعميل. لست تتحدث للعميل مباشرة.
+SANAD_SYSTEM_PROMPT = """أنت مساعد داخلي يكتب مسودة رد لموظف دعم بشري سيراجعها قبل إرسالها للعميل. لست تتحدث للعميل مباشرة.
 
 قواعد صارمة:
 1. اكتب المسودة بنفس لغة رسالة العميل (عربي أو إنجليزي)، بأسلوب مهني ومتعاطف وواضح.
@@ -339,7 +404,7 @@ def generate_draft(question: str, retrieved_chunks: List[Dict]) -> str:
 
     content = openrouter_chat(
         [
-            {"role": "system", "content": AGENT_ASSIST_SYSTEM_PROMPT},
+            {"role": "system", "content": SANAD_SYSTEM_PROMPT},
             {"role": "user", "content": build_prompt(question, retrieved_chunks)},
         ],
         max_tokens=700,
@@ -357,4 +422,82 @@ def generate_draft(question: str, retrieved_chunks: List[Dict]) -> str:
     return (
         f"[وضع بدون مفتاح API — مسودة استخراجية]\n"
         f"أقرب مصدر ({kind}): {top['title']}\n\"{top['text']}\""
+    )
+
+
+# ---------------------------------------------------------------------------
+# أسئلة توضيحية للرسائل الغامضة
+# ---------------------------------------------------------------------------
+MAX_CLARIFYING_QUESTIONS = 3
+
+# أسئلة تطلب بيانات حساسة تُحذف دائمًا، حتى لو كتبها الـ LLM (سياسة الفصل 19 في الدليل).
+_SENSITIVE_QUESTION_RE = re.compile(
+    r"كود\s*(ال)?تحقق|رمز\s*(ال)?تحقق|\bOTP\b|كود\s*(ال)?سحب|باسورد|كلم[ةه]\s*(ال)?(مرور|سر)|الرقم\s*السري|"
+    r"\bPIN\b|\bCVV\b|رمز\s*الأمان|رقم\s*(ال)?بطاق|card\s*number|password",
+    re.IGNORECASE,
+)
+
+CLARIFY_PROMPT = """أنت تساعد موظف دعم محفظة إلكترونية (تحويلات، سحب وإيداع عند الوكلاء، بطاقات بنكية، توثيق هوية، حدود، رسوم، نزاعات، تجميد وغلق حساب، حسابات أعمال).
+رسالة العميل التالية غير واضحة بما يكفي لاختيار الإجراء الصحيح. المواضيع المحتملة حسب المصادر المسترجعة:
+{topics}
+
+رسالة العميل: {question}
+
+المطلوب:
+- إذا كانت الرسالة لا علاقة لها بخدمات المحفظة أصلًا (مثل منتجات أو خدمات لا نقدمها)، أعد: {{"out_of_scope": true, "questions": []}}
+- غير ذلك، اكتب من 1 إلى {max_q} أسئلة قصيرة وواضحة موجهة للعميل مباشرة، بنفس لغة رسالته، تساعد على معرفة طلبه بالضبط والتمييز بين المواضيع المحتملة. ابدأ بالسؤال الأهم.
+- ممنوع تمامًا طلب كود التحقق أو كلمة المرور أو الرقم السري أو رقم البطاقة أو رمز الأمان.
+- أعد JSON فقط بدون أي شرح: {{"out_of_scope": false, "questions": ["...", "..."]}}"""
+
+
+def parse_clarification(content: str | None) -> Dict | None:
+    """يقرأ رد الـ LLM: JSON إن أمكن، وإلا أسطر تنتهي بعلامة استفهام. يطبق الحد
+    الأقصى (3) ويحذف الأسئلة الحساسة والمكررة. None = رد غير قابل للاستخدام."""
+    if not content:
+        return None
+    data = None
+    match = re.search(r"\{.*\}", content, re.S)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            data = None
+    if isinstance(data, dict):
+        out_of_scope = bool(data.get("out_of_scope"))
+        raw = data.get("questions") or []
+        raw = [q for q in raw if isinstance(q, str)]
+    else:
+        out_of_scope = False
+        raw = [l for l in content.splitlines() if l.strip().endswith(("?", "؟"))]
+    questions = []
+    for q in raw:
+        q = re.sub(r"^\s*(\d+[.)-]|[-*•])\s*", "", q).strip()
+        if q and not _SENSITIVE_QUESTION_RE.search(q) and q not in questions:
+            questions.append(q)
+    questions = questions[:MAX_CLARIFYING_QUESTIONS]
+    if out_of_scope:
+        return {"out_of_scope": True, "questions": []}
+    return {"out_of_scope": False, "questions": questions} if questions else None
+
+
+def generate_clarifying_questions(question: str, retrieved_chunks: List[Dict]) -> Dict | None:
+    """طلب واحد لـ OpenRouter يقرر: هل الرسالة خارج النطاق أصلًا، أم غامضة وتحتاج حتى
+    3 أسئلة توضيحية للعميل. None عند غياب المزوّد أو فشله (فتُصعَّد الحالة كالمعتاد)."""
+    topics = "\n".join(f"- {c['title']}" for c in retrieved_chunks) or "- (لا توجد)"
+    content = openrouter_chat(
+        [{"role": "user", "content": CLARIFY_PROMPT.format(topics=topics, question=question, max_q=MAX_CLARIFYING_QUESTIONS)}],
+        max_tokens=300,
+        task="clarify",
+    )
+    return parse_clarification(content)
+
+
+def compose_clarification_email(questions: List[str]) -> str:
+    """مسودة إيميل الأسئلة التي يراجعها الموظف قبل الإرسال (رابط الرد يُضاف عند الإرسال)."""
+    lines = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
+    return (
+        "أهلًا بحضرتك، شكرًا لتواصلك معنا.\n"
+        "عشان نقدر نساعدك بدقة، محتاجين نعرف شوية تفاصيل:\n\n"
+        f"{lines}\n\n"
+        "ممكن ترد على الأسئلة دي من الرابط اللي تحت، وهنكمل معاك على طول."
     )

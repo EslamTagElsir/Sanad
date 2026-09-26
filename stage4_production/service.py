@@ -1,5 +1,5 @@
 """
-المرحلة 4: خدمة الإنتاج (Agent-Assist API)
+المرحلة 4: خدمة الإنتاج (Sanad API)
 ---------------------------------------------
 الفرق الجوهري عن نظام عملاء نهائي: هنا موظف دعم بشري يراجع كل مسودة قبل
 إرسالها دائمًا، فالقرار المهم ليس "أجب أم ارفض" (ثنائي)، بل تصنيف ثلاثي لمدى
@@ -17,7 +17,7 @@
 الاسترجاع يتم دائمًا من كل المصادر المتاحة (كل مقالات KB وكل التذاكر السابقة)
 بدون تقييد بالأقسام. تسجيل لكل طلب، وCache بسيط.
 
-شغّله من داخل مجلد agent-assist-copilot:
+شغّله من داخل مجلد المشروع (sanad):
     uvicorn stage4_production.service:app --reload
 ثم (بعد POST /login للحصول على توكن):
     curl -X POST http://127.0.0.1:8000/draft -H "Content-Type: application/json" \\
@@ -26,6 +26,8 @@
 """
 
 import hashlib
+
+import common
 import hmac
 import logging
 import os
@@ -40,25 +42,29 @@ from typing import Optional
 sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from common import generate_draft, openrouter_chat
+from common import generate_draft
 from stage2_hybrid import rag
 from stage2_hybrid.rag import retrieve_with_signals, build_index, FINAL_K
 from stage2_hybrid import confidence as confidence_model
 from stage2_hybrid.confidence import ESCALATE_BELOW, SEND_READY_ABOVE
-from stage4_production import auth
+from stage4_production import auth, ticket_store
 from stage4_production.email_service import send_reply_email
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
-logger = logging.getLogger("agent_copilot")
+logger = logging.getLogger("sanad")
 
 MAX_MESSAGE_CHARS = 4000
 
+# العنوان العام الذي يفتح منه العميل رابط الرد (run.bat يضبطه على المنفذ المختار).
+# لعملاء حقيقيين يجب أن يكون عنوانًا عامًا لا localhost.
+PUBLIC_URL = (os.environ.get("SANAD_PUBLIC_URL") or "http://localhost:8000").rstrip("/")
+
 _draft_cache: dict[str, dict] = {}
 _llm_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="llm")
-_tickets: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -81,17 +87,17 @@ _tickets: dict[str, dict] = {}
 # مغلق افتراضيًا (fail-closed): طلب بلا توكن صالح ولا مفتاح صالح يُرفض دائمًا
 # بـ 401. سابقًا كان غياب مفاتيح X-API-Key في .env يجعل *أي* طلب مجهول يُعامَل
 # كموظف (تجاوز كامل للمصادقة رغم وجود مستخدمين حقيقيين في users.json). الوضع
-# المفتوح للتطوير المحلي صار يتطلب تفعيلًا صريحًا: AGENT_ASSIST_DEV_OPEN=1.
+# المفتوح للتطوير المحلي صار يتطلب تفعيلًا صريحًا: SANAD_DEV_OPEN=1.
 def _parse_keys(env_name: str) -> set[str]:
     raw = os.environ.get(env_name, "")
     return {k.strip() for k in raw.split(",") if k.strip()}
 
 
-EMPLOYEE_KEYS = _parse_keys("AGENT_ASSIST_EMPLOYEE_KEYS")
-CUSTOMER_KEYS = _parse_keys("AGENT_ASSIST_CUSTOMER_KEYS")
-DEV_OPEN = os.environ.get("AGENT_ASSIST_DEV_OPEN", "").lower() in ("1", "true", "yes")
+EMPLOYEE_KEYS = _parse_keys("SANAD_EMPLOYEE_KEYS")
+CUSTOMER_KEYS = _parse_keys("SANAD_CUSTOMER_KEYS")
+DEV_OPEN = os.environ.get("SANAD_DEV_OPEN", "").lower() in ("1", "true", "yes")
 if DEV_OPEN:
-    logger.warning("AGENT_ASSIST_DEV_OPEN مفعّل: الطلبات بلا مصادقة تُعامَل كموظف. لا تستخدمه خارج جهازك.")
+    logger.warning("SANAD_DEV_OPEN مفعّل: الطلبات بلا مصادقة تُعامَل كموظف. لا تستخدمه خارج جهازك.")
 
 DEV_IDENTITY = {"sub": "dev", "role": "employee", "display_name": "موظف (وضع تطوير)"}
 
@@ -133,31 +139,6 @@ def get_current_employee(identity: dict = Depends(get_identity)) -> dict:
     return identity
 
 
-def _parse_yes_no(text: Optional[str]) -> Optional[bool]:
-    """نعم/yes → True، لا/no → False، وأي شيء آخر (رد فارغ من نموذج تفكير
-    نفد منه max_tokens، أو كلام غير واضح) → None: لا نبني قرارًا على رد غامض."""
-    t = (text or "").strip().lower()
-    if not t:
-        return None
-    if t.startswith(("نعم", "yes", "ايوه", "أيوه")):
-        return True
-    if t.startswith(("لا", "no")):
-        return False
-    return None
-
-
-def _llm_scope_check(question: str, chunks: list[dict]) -> Optional[bool]:
-    """تحقق ثانٍ عبر OpenRouter للحالات الحدّية فقط (توفيرًا للتكلفة) على كل
-    المصادر التي ستُبنى عليها المسودة (لا أولها فقط). رد فارغ أو غامض أو فشل →
-    None، فيبقى قرار نموذج الثقة المعايَر كما هو."""
-    context = "\n\n---\n\n".join(c["text"] for c in chunks)
-    prompt = (
-        f"السياق:\n{context}\n\nرسالة العميل: {question}\n\n"
-        "هل هذا السياق يحتوي فعلًا على ما يلزم للرد على رسالة العميل هذه؟ أجب بكلمة واحدة: نعم أو لا."
-    )
-    return _parse_yes_no(openrouter_chat([{"role": "user", "content": prompt}], max_tokens=10, task="scope_check"))
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     t0 = time.perf_counter()
@@ -171,7 +152,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Agent-Assist Copilot - Stage 4", lifespan=lifespan)
+app = FastAPI(title="Sanad", lifespan=lifespan)
 
 
 class LoginRequest(BaseModel):
@@ -203,7 +184,10 @@ def login(req: LoginRequest):
 
 
 class DraftRequest(BaseModel):
-    customer_message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+    # ticket_id (الواجهة): تُبنى الرسالة من محادثة التذكرة كلها (الرسالة الأولى +
+    # توضيحات العميل). customer_message: رسالة مباشرة (توافقية/أتمتة).
+    customer_message: Optional[str] = Field(default=None, min_length=1, max_length=MAX_MESSAGE_CHARS)
+    ticket_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class Citation(BaseModel):
@@ -215,12 +199,16 @@ class DraftResponse(BaseModel):
     draft: str
     citations: list[Citation]
     confidence: float
-    action: str  # send_ready | needs_review | escalate
+    action: str  # send_ready | needs_review | clarify | escalate
     cached: bool
     latency_ms: float
+    # سبب التصعيد بلغة الموظف (None إن لم تُصعَّد الحالة). عند التصعيد لا تُكتب
+    # مسودة، لكن تُعرض المصادر المسترجعة مع السبب ليقرر الموظف بنفسه.
+    reason: Optional[str] = None
+    # action == "clarify": حتى 3 أسئلة للعميل (والمسودة = إيميل يحتويها).
+    clarifying_questions: list[str] = []
     # زمن كل مرحلة بالملّي ثانية (لتشخيص البطء): retrieval، translation، rerank،
-    # wait_llm (انتظار الترجمة/الترتيب بعد انتهاء الاسترجاع)، confidence،
-    # scope_check، draft.
+    # wait_llm (انتظار الترجمة/الترتيب بعد انتهاء الاسترجاع)، confidence، draft.
     timings: dict[str, float] = {}
 
 
@@ -228,7 +216,16 @@ def _cache_key(question: str) -> str:
     return hashlib.sha256(question.encode()).hexdigest()
 
 
-ESCALATE_TEXT = "لا توجد معلومات كافية في قاعدة المعرفة أو التذاكر السابقة لصياغة رد موثوق. يُنصح بتصعيد الحالة لموظف أعلى أو فريق مختص."
+def escalation_reason(confidence: float, has_sources: bool, translated: bool) -> str:
+    if not has_sources:
+        return "لا توجد مصادر في قاعدة المعرفة أو دليل السياسات أو التذاكر السابقة لهذه الرسالة."
+    pct = round(confidence * 100)
+    if not translated:
+        return (f"الثقة منخفضة ({pct}%) لأن ترجمة رسالة العميل تعذّرت (خدمة الـ LLM لم تستجب)، "
+                "والثقة بدون الترجمة تكون أقل عادةً لرسائل العامية. راجع المصادر أدناه — قد تكون مناسبة — "
+                "أو أعد توليد المسودة بعد قليل.")
+    return (f"الثقة منخفضة ({pct}%): المصادر المسترجعة غالبًا لا تجيب على رسالة العميل. "
+            "راجعها أدناه، واكتب الرد يدويًا أو صعّد الحالة.")
 
 
 def decide_action(confidence: float, top_chunk: Optional[dict]) -> str:
@@ -239,9 +236,9 @@ def decide_action(confidence: float, top_chunk: Optional[dict]) -> str:
     return "needs_review"
 
 
-def handle_request(customer_message: str) -> DraftResponse:
+def handle_request(customer_message: str, allow_clarify: bool = True) -> DraftResponse:
     start = time.time()
-    key = _cache_key(customer_message)
+    key = _cache_key(f"{allow_clarify}::{customer_message}")
     if key in _draft_cache:
         cached = _draft_cache[key]
         latency = (time.time() - start) * 1000
@@ -279,25 +276,39 @@ def handle_request(customer_message: str) -> DraftResponse:
     action = decide_action(confidence, top[0] if top else None)
     timings["confidence"] = round((time.perf_counter() - t) * 1000, 1)
 
-    # نطاق حدّي حول عتبة التصعيد فقط (حيث الخطأ أخطر: عرض مسودة رغم عدم وجود
-    # مصدر مناسب فعلًا). لا نستشير LLM حول عتبة send_ready لأن needs_review هو
-    # افتراضي آمن أصلًا هناك (الموظف يراجع في الحالتين).
-    if top and abs(confidence - ESCALATE_BELOW) <= 0.1:
-        llm_ok = timed("scope_check", _llm_scope_check, customer_message, top)
-        if llm_ok is not None:
-            action = "needs_review" if llm_ok else "escalate"
-            logger.info(f"  ↳ نطاق حدّي (confidence={confidence:.3f})، تحقق LLM: in_scope={llm_ok}")
+    # القرار لنموذج الثقة المعايَر وحده: تحقق "هل السياق كافٍ؟" بالـ LLM أُزيل بعد
+    # أن أخطأ في قراريه في التقييم (evaluation/generation_eval.py) — مرّر سؤالًا
+    # خارج النطاق (قروض) وصعّد سؤالًا صحيحًا (غلق الحساب).
 
-    if action == "escalate":
-        draft_text = ESCALATE_TEXT
-        citations = []
+    # المصادر تُعرض دائمًا (حتى عند التصعيد) ليقرر الموظف بنفسه.
+    citations = [Citation(title=c["title"], source_type=c["source_type"]) for c in top]
+    translated = bool(translation)
+    questions: list[str] = []
+    if action == "escalate" and top and allow_clarify:
+        # رسالة غير مفهومة: الـ LLM يقرر في طلب واحد إن كانت خارج النطاق أصلًا
+        # (تصعيد كالمعتاد) أم غامضة فيكتب حتى 3 أسئلة يراجعها الموظف ويرسلها.
+        clar = timed("clarify", common.generate_clarifying_questions, customer_message, top)
+        if clar and not clar["out_of_scope"] and clar["questions"]:
+            action, questions = "clarify", clar["questions"]
+        elif clar and clar["out_of_scope"]:
+            logger.info("  ↳ الـ LLM قدّر أن الرسالة خارج نطاق خدمات المحفظة — تصعيد بدون أسئلة")
+
+    if action == "clarify":
+        draft_text = common.compose_clarification_email(questions)
+        reason = ("الرسالة غير واضحة بما يكفي لاختيار الرد الصحيح. أرسل للعميل الأسئلة التوضيحية أدناه "
+                  "(يمكنك تعديلها)، وسيصله رابط يرد منه على نفس التذكرة.")
+    elif action == "escalate":
+        draft_text, reason = "", escalation_reason(confidence, bool(top), translated)
     else:
-        draft_text = timed("draft", generate_draft, customer_message, top)
-        citations = [Citation(title=c["title"], source_type=c["source_type"]) for c in top]
+        draft_text, reason = timed("draft", generate_draft, customer_message, top), None
 
     latency = (time.time() - start) * 1000
-    result = {"draft": draft_text, "citations": citations, "confidence": round(confidence, 3), "action": action}
-    _draft_cache[key] = result
+    result = {"draft": draft_text, "citations": citations, "confidence": round(confidence, 3),
+              "action": action, "reason": reason, "clarifying_questions": questions}
+    # نتيجة محسوبة بدون ترجمة بسبب عطل مؤقت لا تُخزَّن: إعادة التوليد بعد قليل يجب
+    # أن تجرّب الترجمة من جديد، لا أن ترجع نفس النتيجة من الكاش.
+    if translated or not common.get_openrouter_client():
+        _draft_cache[key] = result
 
     logger.info(
         f"msg={customer_message!r} | confidence={confidence:.3f} | "
@@ -308,6 +319,15 @@ def handle_request(customer_message: str) -> DraftResponse:
 
 @app.post("/draft", response_model=DraftResponse)
 def draft_endpoint(req: DraftRequest, employee: dict = Depends(get_current_employee)):
+    if req.ticket_id:
+        ticket = ticket_store.get_ticket(req.ticket_id)
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="التذكرة غير موجودة")
+        # جولة توضيح واحدة لكل تذكرة: بعد رد العميل لا نسأل مرة ثانية.
+        return handle_request(ticket_store.conversation_for_retrieval(ticket),
+                              allow_clarify=not ticket_store.had_clarification(ticket))
+    if not req.customer_message:
+        raise HTTPException(status_code=422, detail="أرسل ticket_id أو customer_message")
     return handle_request(req.customer_message)
 
 
@@ -317,12 +337,25 @@ class TicketSubmission(BaseModel):
     customer_email: Optional[str] = Field(default=None, max_length=254, pattern=r"^[^@\s<>\"'`]+@[^@\s<>\"'`]+\.[^@\s<>\"'`]+$")
 
 
+class Message(BaseModel):
+    sender: str  # customer | agent
+    kind: str    # message | clarification
+    text: str
+    created_at: float
+
+
 class TicketRecord(BaseModel):
     ticket_id: str
-    customer_message: str
+    customer_message: str          # أول رسالة من العميل
     customer_email: Optional[str] = None
-    status: str  # pending | sent | escalated
+    status: str  # pending | awaiting_customer | sent | escalated
     created_at: float
+    messages: list[Message] = []   # المحادثة كاملة
+
+
+def _record(ticket: dict) -> TicketRecord:
+    return TicketRecord(**{k: ticket[k] for k in ("ticket_id", "customer_message", "customer_email",
+                                                  "status", "created_at", "messages")})
 
 
 @app.post("/submit-ticket", response_model=TicketRecord)
@@ -330,75 +363,126 @@ def submit_ticket(req: TicketSubmission):
     """نقطة الدخول الوحيدة المتاحة للعميل — عامة عمدًا (صفحة العميل بلا تسجيل
     دخول)، وآمنة لأنها لا تُشغِّل أي استرجاع أو توليد ولا تُرجع أي محتوى من
     قاعدة المعرفة: فقط تسجّل الرسالة بحالة 'pending' لمراجعة موظف لاحقًا."""
-    ticket_id = secrets.token_hex(6)
-    record = {
-        "ticket_id": ticket_id,
-        "customer_message": req.customer_message,
-        "customer_email": req.customer_email,
-        "status": "pending",
-        "created_at": time.time(),
-    }
-    _tickets[ticket_id] = record
-    logger.info(f"TICKET SUBMITTED | id={ticket_id} | msg={req.customer_message!r}")
-    return TicketRecord(**record)
+    ticket = ticket_store.create_ticket(req.customer_message, req.customer_email)
+    logger.info(f"TICKET SUBMITTED | id={ticket['ticket_id']} | msg={req.customer_message!r}")
+    return _record(ticket)
 
 
 @app.get("/tickets", response_model=list[TicketRecord])
 def list_tickets(status: str = "pending", employee: dict = Depends(get_current_employee)):
     """موظفون فقط: قائمة التذاكر (افتراضيًا pending) لمراجعتها عبر /draft."""
-    records = _tickets.values() if status == "all" else (t for t in _tickets.values() if t["status"] == status)
-    return [TicketRecord(**t) for t in records]
+    return [_record(t) for t in ticket_store.list_tickets(status)]
 
 
 class ResolveRequest(BaseModel):
     final_text: str = Field(max_length=10000)
-    resolution: str  # "send" (إرسال إيميل فعلي للعميل) أو "escalate" (بدون إرسال)
+    # "send": رد نهائي بالإيميل | "clarify": أسئلة توضيحية بالإيميل + رابط رد على
+    # نفس التذكرة (تصبح awaiting_customer) | "escalate": بدون إرسال
+    resolution: str
 
 
 class ResolveResponse(BaseModel):
     ticket: TicketRecord
     email_sent: bool
     email_error: Optional[str] = None
+    reply_link: Optional[str] = None  # للأسئلة التوضيحية: ليرسله الموظف يدويًا إن فشل الإيميل
+
+
+def reply_link(ticket: dict) -> str:
+    return f"{PUBLIC_URL}/app/reply.html?t={ticket['reply_token']}"
 
 
 @app.post("/tickets/{ticket_id}/resolve", response_model=ResolveResponse)
 def resolve_ticket(ticket_id: str, req: ResolveRequest, employee: dict = Depends(get_current_employee)):
-    """موظفون فقط. 'send' يرسل final_text فعليًا لبريد العميل عبر SendGrid
-    (raise_for_status لا يُستخدم عمدًا: فشل الإرسال لا يجب أن يمنع الموظف من
-    إكمال عمله، فقط يُبلَّغ به ليكمل الإرسال يدويًا). 'escalate' لا يرسل شيئًا،
-    يعلّم التذكرة فقط لمتابعة فريق أعلى."""
-    ticket = _tickets.get(ticket_id)
+    """موظفون فقط. 'send' و'clarify' يرسلان final_text فعليًا لبريد العميل عبر
+    SendGrid ('clarify' يضيف رابط الرد). فشل الإرسال لا يمنع الموظف من إكمال عمله:
+    تبقى التذكرة pending ويُبلَّغ بالخطأ (ومعه الرابط) ليكمل يدويًا. 'escalate' لا
+    يرسل شيئًا، يعلّم التذكرة فقط لمتابعة فريق أعلى."""
+    ticket = ticket_store.get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="التذكرة غير موجودة")
-    if req.resolution not in ("send", "escalate"):
-        raise HTTPException(status_code=422, detail="resolution يجب أن تكون 'send' أو 'escalate'")
+    if req.resolution not in ("send", "clarify", "escalate"):
+        raise HTTPException(status_code=422, detail="resolution يجب أن تكون 'send' أو 'clarify' أو 'escalate'")
 
-    email_sent, email_error = False, None
-    if req.resolution == "send":
+    email_sent, email_error, link = False, None, None
+    if req.resolution in ("send", "clarify"):
+        body = req.final_text
+        if req.resolution == "clarify":
+            link = reply_link(ticket)
+            body = f"{body}\n\nللرد على الأسئلة: {link}"
         if not ticket.get("customer_email"):
-            email_error = "لا يوجد بريد إلكتروني مسجَّل لهذا العميل — أرسل المسودة يدويًا."
+            email_error = "لا يوجد بريد إلكتروني مسجَّل لهذا العميل — أرسل الرد يدويًا."
         else:
             email_sent, email_error = send_reply_email(
                 to_email=ticket["customer_email"],
-                subject="رد بخصوص تذكرتك",
-                body_text=req.final_text,
+                subject="أسئلة بخصوص تذكرتك" if req.resolution == "clarify" else "رد بخصوص تذكرتك",
+                body_text=body,
             )
-        # لا نعلّم التذكرة "sent" إلا لو الإيميل اتبعت فعلًا؛ فشل الإرسال يبقيها
-        # "pending" حتى لا تختفي من قائمة المتابعة رغم أن العميل لم يستلم شيئًا.
-        ticket["status"] = "sent" if email_sent else "pending"
+        # لا تتغير الحالة إلا لو الإيميل اتبعت فعلًا؛ فشل الإرسال يبقيها "pending"
+        # حتى لا تختفي من قائمة المتابعة رغم أن العميل لم يستلم شيئًا.
+        if email_sent:
+            kind = "clarification" if req.resolution == "clarify" else "message"
+            ticket_store.add_message(ticket_id, "agent", req.final_text, kind)
+            ticket_store.set_status(ticket_id, "awaiting_customer" if req.resolution == "clarify" else "sent")
     else:
-        ticket["status"] = "escalated"
+        ticket_store.set_status(ticket_id, "escalated")
 
+    ticket = ticket_store.get_ticket(ticket_id)
     logger.info(
         f"TICKET RESOLVED | id={ticket_id} | by={employee.get('display_name')} | "
         f"resolution={req.resolution} | email_sent={email_sent}" + (f" | error={email_error}" if email_error else "")
     )
-    return ResolveResponse(ticket=TicketRecord(**ticket), email_sent=email_sent, email_error=email_error)
+    return ResolveResponse(ticket=_record(ticket), email_sent=email_sent, email_error=email_error, reply_link=link)
+
+
+# ---------------------------------------------------------------------------
+# رد العميل على الأسئلة التوضيحية (عام، بالرمز السري في الرابط فقط)
+# ---------------------------------------------------------------------------
+class ReplyView(BaseModel):
+    questions: str        # آخر رسالة أسئلة من الموظف
+    can_reply: bool       # False إذا رد العميل بالفعل أو أُغلقت التذكرة
+
+
+class CustomerReply(BaseModel):
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+
+def _ticket_by_token(token: str) -> dict:
+    ticket = ticket_store.get_by_reply_token(token) if len(token) <= 64 else None
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="الرابط غير صالح أو منتهي")
+    return ticket
+
+
+@app.get("/reply/{token}", response_model=ReplyView)
+def reply_view(token: str):
+    """لا يكشف أي بيانات غير أسئلة الموظف نفسها (لا إيميل ولا رقم تذكرة)."""
+    ticket = _ticket_by_token(token)
+    last_q = next((m["text"] for m in reversed(ticket["messages"]) if m["kind"] == "clarification"), "")
+    return ReplyView(questions=last_q, can_reply=ticket["status"] == "awaiting_customer")
+
+
+@app.post("/reply/{token}")
+def reply_submit(token: str, req: CustomerReply):
+    ticket = _ticket_by_token(token)
+    if ticket["status"] != "awaiting_customer":
+        raise HTTPException(status_code=409, detail="تم استلام ردك بالفعل، وسيتواصل معك أحد موظفي الدعم.")
+    ticket_store.add_message(ticket["ticket_id"], "customer", req.message)
+    ticket_store.set_status(ticket["ticket_id"], "pending")   # ترجع لقائمة الموظف
+    logger.info(f"CUSTOMER REPLY | id={ticket['ticket_id']} | msg={req.message!r}")
+    return {"status": "received"}
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/app/")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    # instance: رمز عشوائي يمرره run.bat لكل تشغيل، ليتأكد أن من يرد على المنفذ هو
+    # هذا السيرفر تحديدًا لا تطبيقًا آخر (مثل نسخة Docker على نفس المنفذ).
+    return {"status": "ok", "instance": os.environ.get("SANAD_INSTANCE_ID", "")}
 
 
 STATIC_DIR = Path(__file__).parent / "static"

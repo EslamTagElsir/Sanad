@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent-Assist Copilot — لوحة الموظف</title>
+<title>Sanad — لوحة الموظف</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap">
 <style>
   :root{
@@ -70,9 +70,14 @@
   .chip-kb{background:var(--brand);color:#fff;} .chip-ticket{background:#fff;border:1px solid #ccc;color:#555;}
   textarea.draft{width:100%;min-height:160px;padding:16px;border-radius:12px;border:1px solid var(--line);background:#fff;font-size:14px;line-height:1.8;resize:vertical;}
   .row{display:flex;gap:12px;align-items:center;}
-  .toast{padding:12px 16px;border-radius:10px;font-size:13px;}
+  .toast{padding:12px 16px;border-radius:10px;font-size:13px;white-space:pre-line;overflow-wrap:anywhere;}
   .toast-ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-bd);}
   .toast-warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-bd);}
+  .toast-info{background:#E8F0FB;color:#1D4F91;border:1px solid #9DB8E0;}
+  .conv-msg{padding:8px 12px;border-radius:10px;margin-top:8px;white-space:pre-line;font-size:14px;line-height:1.7;}
+  .conv-customer{background:#F4F5F2;} .conv-agent{background:#E8F0FB;}
+  .conv-who{display:block;font-size:11px;font-weight:700;color:var(--faint);margin-bottom:2px;}
+  .reply-flag{font-size:11px;font-weight:700;color:#1D4F91;background:#E8F0FB;padding:1px 8px;border-radius:10px;}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;animation:sp .7s linear infinite;}
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
@@ -82,7 +87,7 @@
 <div id="loginScreen">
   <form class="login-card" id="loginForm">
     <div class="login-logo"></div>
-    <h1>Agent-Assist Copilot</h1>
+    <h1>Sanad</h1>
     <p>سجّل الدخول بحساب الموظف الخاص بك</p>
     <div class="field">
       <label for="username">اسم المستخدم</label>
@@ -99,7 +104,7 @@
 
 <div id="dashboard" hidden>
   <header>
-    <div class="brand"><div class="mark"></div>Agent-Assist Copilot</div>
+    <div class="brand"><div class="mark"></div>Sanad</div>
     <div class="who">
       <span class="avatar" id="avatarInitial"></span>
       <span id="displayName"></span>
@@ -118,7 +123,7 @@
       <div id="noSelection" class="empty-state" style="height:100%;justify-content:center;display:flex;">اختر تذكرة من القائمة لعرضها</div>
 
       <div id="ticketPanel" class="panel" hidden>
-        <div class="msg-card"><span class="label" style="display:block;">رسالة العميل</span><span id="panelMessage"></span></div>
+        <div class="msg-card"><span class="label" style="display:block;">المحادثة</span><div id="panelConversation"></div></div>
 
         <div class="row">
           <button class="btn btn-primary" id="generateBtn">توليد مسودة</button>
@@ -131,6 +136,7 @@
             <div class="row"><span class="badge" id="actionBadge"></span><span id="confidenceText" style="font-size:13px;color:var(--muted);"></span></div>
             <div class="meter" style="margin-top:8px;"><div id="meterFill"></div></div>
           </div>
+          <div id="escalationReason" class="toast toast-warn" hidden></div>
           <div id="citationsRow" class="row" style="flex-wrap:wrap;"></div>
           <div>
             <div class="label">مسودة الرد (قابلة للتعديل قبل الإرسال)</div>
@@ -148,8 +154,8 @@
 </div>
 
 <script>
-const TOKEN_KEY = 'agentassist_token';
-const NAME_KEY = 'agentassist_name';
+const TOKEN_KEY = 'sanad_token';
+const NAME_KEY = 'sanad_name';
 let tickets = [];
 let selectedTicket = null;
 
@@ -242,6 +248,12 @@ function renderTicketList() {
     div.querySelector('.ticket-email').textContent = t.customer_email || 'بدون إيميل';
     div.querySelector('.ticket-time').textContent = time;
     div.querySelector('.ticket-msg').textContent = t.customer_message;
+    if ((t.messages || []).some((m) => m.kind === 'clarification')) {
+      const flag = document.createElement('span');
+      flag.className = 'reply-flag';
+      flag.textContent = 'رد العميل على الأسئلة';
+      div.querySelector('.ticket-meta').appendChild(flag);
+    }
     div.addEventListener('click', () => selectTicket(t));
     list.appendChild(div);
   });
@@ -252,7 +264,7 @@ function selectTicket(t) {
   renderTicketList();
   document.getElementById('noSelection').hidden = true;
   document.getElementById('ticketPanel').hidden = false;
-  document.getElementById('panelMessage').textContent = t.customer_message;
+  renderConversation(t);
   document.getElementById('draftResult').hidden = true;
   document.getElementById('draftError').hidden = true;
   document.getElementById('resolveResult').innerHTML = '';
@@ -261,9 +273,29 @@ function selectTicket(t) {
   document.getElementById('generateBtn').textContent = 'توليد مسودة';
 }
 
+// المحادثة كلها (مصدرها العميل والموظف) → textContent فقط، لا innerHTML.
+function renderConversation(t) {
+  const box = document.getElementById('panelConversation');
+  box.innerHTML = '';
+  const msgs = (t.messages && t.messages.length) ? t.messages : [{ sender: 'customer', kind: 'message', text: t.customer_message }];
+  msgs.forEach((m) => {
+    const div = document.createElement('div');
+    div.className = 'conv-msg ' + (m.sender === 'agent' ? 'conv-agent' : 'conv-customer');
+    const who = document.createElement('span');
+    who.className = 'conv-who';
+    who.textContent = m.sender === 'agent' ? (m.kind === 'clarification' ? 'أسئلتنا التوضيحية' : 'ردّنا') : 'العميل';
+    div.appendChild(who);
+    div.appendChild(document.createTextNode(m.text));
+    box.appendChild(div);
+  });
+}
+
+let currentAction = null;
+
 const ACTION_STYLES = {
   send_ready: { label: 'جاهز للإرسال', bg: 'var(--ok-bg)', fg: 'var(--ok-fg)', bd: 'var(--ok-bd)' },
   needs_review: { label: 'يحتاج مراجعة', bg: 'var(--warn-bg)', fg: 'var(--warn-fg)', bd: 'var(--warn-bd)' },
+  clarify: { label: 'يحتاج توضيح', bg: '#E8F0FB', fg: '#1D4F91', bd: '#9DB8E0' },
   escalate: { label: 'تصعيد', bg: 'var(--bad-bg)', fg: 'var(--bad-fg)', bd: 'var(--bad-bd)' }
 };
 
@@ -276,7 +308,7 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     const resp = await api('/draft', {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ customer_message: selectedTicket.customer_message })
+      body: JSON.stringify({ ticket_id: selectedTicket.ticket_id })
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -306,6 +338,15 @@ function renderDraft(draft) {
   fill.style.width = Math.round(draft.confidence * 100) + '%';
   fill.style.background = meta.fg;
 
+  // سبب التصعيد (إن وُجد) + المصادر المسترجعة تُعرض دائمًا ليقرر الموظف بنفسه
+  currentAction = draft.action;
+  const reasonBox = document.getElementById('escalationReason');
+  reasonBox.textContent = draft.reason || '';
+  reasonBox.hidden = !draft.reason;
+  reasonBox.className = 'toast ' + (draft.action === 'clarify' ? 'toast-info' : 'toast-warn');
+  document.getElementById('sendBtn').textContent =
+    draft.action === 'clarify' ? 'إرسال الأسئلة للعميل' : 'إرسال للعميل بالإيميل';
+
   const citationsRow = document.getElementById('citationsRow');
   citationsRow.innerHTML = '';
   if (draft.citations.length === 0) {
@@ -313,6 +354,11 @@ function renderDraft(draft) {
     span.style.cssText = 'font-size:13px;color:var(--faint);';
     span.textContent = 'لا يوجد مصدر مناسب في قاعدة المعرفة';
     citationsRow.appendChild(span);
+  } else if (draft.action === 'escalate' || draft.action === 'clarify') {
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:13px;color:var(--muted);';
+    label.textContent = 'مصادر مسترجعة (غير مؤكدة):';
+    citationsRow.appendChild(label);
   }
   draft.citations.forEach((c) => {
     const chip = document.createElement('span');
@@ -322,7 +368,9 @@ function renderDraft(draft) {
     citationsRow.appendChild(chip);
   });
 
-  document.getElementById('draftText').value = draft.draft;
+  const draftText = document.getElementById('draftText');
+  draftText.value = draft.draft;
+  draftText.placeholder = draft.action === 'escalate' ? 'لم تُكتب مسودة تلقائية — اكتب الرد يدويًا بعد مراجعة المصادر، أو صعّد الحالة.' : '';
   document.getElementById('draftResult').hidden = false;
 }
 
@@ -353,6 +401,11 @@ async function resolve(resolution) {
     }
     if (resolution === 'escalate') {
       showResult(resultBox, 'ok', 'تم تصعيد التذكرة للفريق المختص.');
+    } else if (resolution === 'clarify' && body.email_sent) {
+      showResult(resultBox, 'ok', 'تم إرسال الأسئلة للعميل. التذكرة بانتظار رده، وسترجع للقائمة فور وصوله.');
+    } else if (resolution === 'clarify') {
+      showResult(resultBox, 'warn', 'لم يُرسل الإيميل: ' + (body.email_error || 'خطأ غير معروف')
+        + '\nأرسل الأسئلة للعميل يدويًا مع رابط الرد: ' + (body.reply_link || ''));
     } else if (body.email_sent) {
       showResult(resultBox, 'ok', 'تم إرسال الرد للعميل بالإيميل بنجاح.');
     } else {
@@ -366,7 +419,7 @@ async function resolve(resolution) {
   }
 }
 
-document.getElementById('sendBtn').addEventListener('click', () => resolve('send'));
+document.getElementById('sendBtn').addEventListener('click', () => resolve(currentAction === 'clarify' ? 'clarify' : 'send'));
 document.getElementById('escalateBtn').addEventListener('click', () => resolve('escalate'));
 
 if (localStorage.getItem(TOKEN_KEY)) {
