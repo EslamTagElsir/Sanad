@@ -85,4 +85,6 @@ python -m evaluation.generation_eval       # جودة المسودات (يسته
 
 ## الترخيص
 
-المشروع يستخدم PyMuPDF (رخصة AGPL-3.0) لاستخراج نص دليل السياسات.
+المشروع مرخّص بـ **GNU AGPL-3.0** (راجع [LICENSE](LICENSE))، لأنه يستخدم PyMuPDF (رخصة AGPL-3.0) لاستخراج نص دليل السياسات. من يشغّل نسخة معدّلة كخدمة عبر الشبكة يجب أن يتيح كودها المصدري لمستخدميها.
+
+Licensed under the GNU AGPL-3.0 — see [LICENSE](LICENSE).
