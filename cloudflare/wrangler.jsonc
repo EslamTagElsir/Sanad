@@ -3,20 +3,16 @@
 	"name": "sanad",
 	"main": "src/index.js",
 	"compatibility_date": "2026-09-26",
-	"containers": [
-		{
-			"class_name": "SanadContainer",
-			"image": "../Dockerfile",
-			"image_build_context": "..",
-			// 4 GiB memory / 8 GB disk: fits the ~2.5 GB image and the embedding model.
-			"instance_type": "standard-1",
-			"max_instances": 1
-		}
-	],
-	"durable_objects": {
-		"bindings": [{ "name": "SANAD", "class_name": "SanadContainer" }]
+	// Workers AI: ترميز (embedding) الاستعلامات والقطع بنموذج Qwen3-Embedding-0.6B.
+	"ai": { "binding": "AI" },
+	// الصفحات الثابتة تُخدَّم من نفس مجلد النسخة الأصلية تحت المسار /app/ (راجع src/index.js).
+	"assets": {
+		"directory": "../stage4_production/static",
+		"binding": "ASSETS",
+		"run_worker_first": true,
+		"html_handling": "none",
+		"not_found_handling": "none"
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SanadContainer"] }],
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -26,11 +22,12 @@
 		}
 	],
 	"vars": {
-		// Public address customers open from the clarification email.
-		"SANAD_PUBLIC_URL": "https://sanad.REPLACE_WITH_SUBDOMAIN.workers.dev",
+		// عنوان رابط رد العميل في الإيميل. اتركه كما هو ليؤخذ تلقائيًا من عنوان الطلب،
+		// أو ضع عنوانك الفعلي/الدومين الخاص.
+		"SANAD_PUBLIC_URL": "",
 		"OPENROUTER_MODELS": "inclusionai/ling-3.0-flash-fin:free"
 	}
-	// Secrets (set in the dashboard or with `wrangler secret put`, never here):
-	// OPENROUTER_API_KEY, SANAD_JWT_SECRET, SANAD_USERS_JSON, and optionally
+	// Secrets (من لوحة التحكم أو wrangler secret put، لا تكتبها هنا أبدًا):
+	// OPENROUTER_API_KEY, SANAD_JWT_SECRET, SANAD_USERS_JSON, واختياريًا
 	// SENDGRID_API_KEY / SENDGRID_FROM_EMAIL.
 }
