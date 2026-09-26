@@ -83,6 +83,28 @@ python -m evaluation.generation_eval       # جودة المسودات (يسته
 - المساحات المجانية تنام بعد فترة عدم استخدام، وأول طلب بعدها يأخذ حوالي دقيقة.
 - لا يصلح النشر على Vercel: حجم المكتبات والنموذج (>2GB) وزمن البدء والحاجة لتخزين دائم لا تناسب الدوال اللحظية (serverless).
 
+## النشر على Cloudflare (Containers + D1)
+
+نفس الـ Dockerfile يعمل داخل Cloudflare Container خلف Worker صغير (`cloudflare/`).
+**تذاكر المتابعة فقط** (التي أُرسلت فيها أسئلة توضيحية) تُحفظ في قاعدة D1 وتُحذف
+عند إغلاقها؛ التذاكر الجديدة على قرص الحاوية وتضيع إذا نامت الحاوية (بعد 30 دقيقة
+خمول) قبل أن يفتحها موظف.
+
+المتطلبات: Node.js، Docker، خطة Workers Paid (5$ شهريًا). ثم من مجلد `cloudflare/`:
+
+```bash
+npm install
+npx wrangler login
+npx wrangler d1 create sanad-followups          # ضع database_id الناتج في wrangler.jsonc
+npx wrangler d1 migrations apply sanad-followups --remote
+npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put SANAD_JWT_SECRET
+npx wrangler secret put SANAD_USERS_JSON        # ناتج manage_users add
+npx wrangler deploy                             # يبني الصورة (~2.5GB) ويرفعها
+```
+
+بعد أول نشر عدّل `SANAD_PUBLIC_URL` في `wrangler.jsonc` لعنوان الـ Worker الفعلي وأعد `wrangler deploy`.
+
 ## الترخيص
 
 المشروع مرخّص بـ **GNU AGPL-3.0** (راجع [LICENSE](LICENSE))، لأنه يستخدم PyMuPDF (رخصة AGPL-3.0) لاستخراج نص دليل السياسات. من يشغّل نسخة معدّلة كخدمة عبر الشبكة يجب أن يتيح كودها المصدري لمستخدميها.

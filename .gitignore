@@ -7,3 +7,7 @@ stage2_hybrid/store/
 data/users.json
 logs/
 data/tickets.db
+data/followups.db
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/.dev.vars

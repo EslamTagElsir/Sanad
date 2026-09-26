@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "sanad",
+	"main": "src/index.js",
+	"compatibility_date": "2026-09-26",
+	"containers": [
+		{
+			"class_name": "SanadContainer",
+			"image": "../Dockerfile",
+			"image_build_context": "..",
+			// 4 GiB memory / 8 GB disk: fits the ~2.5 GB image and the embedding model.
+			"instance_type": "standard-1",
+			"max_instances": 1
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SANAD", "class_name": "SanadContainer" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SanadContainer"] }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "sanad-followups",
+			// Replace with the id printed by: npx wrangler d1 create sanad-followups
+			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"migrations_dir": "migrations"
+		}
+	],
+	"vars": {
+		// Public address customers open from the clarification email.
+		"SANAD_PUBLIC_URL": "https://sanad.REPLACE_WITH_SUBDOMAIN.workers.dev",
+		"OPENROUTER_MODELS": "inclusionai/ling-3.0-flash-fin:free"
+	},
+	"secrets": {
+		"required": ["OPENROUTER_API_KEY", "SANAD_JWT_SECRET", "SANAD_USERS_JSON"]
+	}
+}

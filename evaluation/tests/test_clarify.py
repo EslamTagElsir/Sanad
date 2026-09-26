@@ -120,6 +120,68 @@ def test_closed_ticket_cannot_be_resolved_again(client, monkeypatch):
     assert len(sent) == 1                                          # لا إيميل مكرر للعميل
 
 
+def _ids_in(path) -> set[str]:
+    import sqlite3
+    if not path.exists():
+        return set()
+    with sqlite3.connect(path) as conn:
+        return {r[0] for r in conn.execute("SELECT ticket_id FROM tickets")}
+
+
+def test_only_follow_up_tickets_are_stored_durably(client, monkeypatch):
+    """جديدة ← محلي فقط | أسئلة توضيحية ← تُنقل للمتابعة | إغلاق ← تُحذف من المتابعة."""
+    monkeypatch.setattr(service, "send_reply_email", lambda to_email, subject, body_text: (True, None))
+    headers = bearer("sara.ahmed")
+    ticket = client.post("/submit-ticket", json={"customer_message": VAGUE, "customer_email": "a@b.co"}).json()
+    tid = ticket["ticket_id"]
+    assert tid in _ids_in(ticket_store.DB_PATH) and tid not in _ids_in(ticket_store.FOLLOWUP_DB_PATH)
+
+    res = client.post(f"/tickets/{tid}/resolve", headers=headers, json={"final_text": "سؤال؟", "resolution": "clarify"}).json()
+    assert res["ticket"]["status"] == "awaiting_customer"
+    assert tid not in _ids_in(ticket_store.DB_PATH) and tid in _ids_in(ticket_store.FOLLOWUP_DB_PATH)
+
+    # "إعادة تشغيل الحاوية": المخزن المحلي يُمسح، والمتابعة ورابط الرد يبقيان
+    ticket_store.DB_PATH.unlink()
+    token = res["reply_link"].split("t=")[1]
+    assert client.post(f"/reply/{token}", json={"message": "توضيح"}).status_code == 200
+    back = ticket_store.get_ticket(tid)
+    assert back["status"] == "pending" and [m["sender"] for m in back["messages"]] == ["customer", "agent", "customer"]
+    assert tid in [t["ticket_id"] for t in client.get("/tickets", headers=headers).json()]
+
+    res = client.post(f"/tickets/{tid}/resolve", headers=headers, json={"final_text": "الرد النهائي", "resolution": "send"}).json()
+    assert res["ticket"]["status"] == "sent" and res["ticket"]["messages"][-1]["text"] == "الرد النهائي"
+    assert tid not in _ids_in(ticket_store.FOLLOWUP_DB_PATH)      # لا أرشيف
+    assert ticket_store.get_ticket(tid) is None
+
+
+def test_d1_store_speaks_the_worker_protocol(monkeypatch, tmp_path):
+    """مخزن D1 يرسل الجمل بصيغة الـ Worker (cloudflare/src/index.js)؛ هنا "Worker"
+    وهمي ينفّذها على SQLite ويرد بنفس شكل D1: [{rows, changes}]."""
+    backing = ticket_store._SQLiteStore(tmp_path / "fake_d1.db")
+    seen = []
+
+    class FakeResponse:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+
+    def fake_post(url, json, timeout):
+        seen.append(url)
+        return FakeResponse(backing.run([(s["sql"], s["params"]) for s in json["statements"]]))
+
+    monkeypatch.setattr(ticket_store.httpx, "post", fake_post)
+    monkeypatch.setattr(ticket_store, "D1_URL", "http://d1.sanad/query")
+
+    t = ticket_store.create_ticket("رسالة", "a@b.co")
+    ticket_store.start_follow_up(t["ticket_id"], "سؤال؟")
+    assert seen and set(seen) == {"http://d1.sanad/query"}
+    assert ticket_store.get_ticket(t["ticket_id"])["status"] == "awaiting_customer"
+    assert ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})
+    assert not ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})
+    assert ticket_store.close_ticket(t["ticket_id"], "escalated")["status"] == "escalated"
+    assert ticket_store.get_ticket(t["ticket_id"]) is None
+
+
 def test_set_status_expected_is_conditional():
     t = ticket_store.create_ticket("رسالة", None)
     assert not ticket_store.set_status(t["ticket_id"], "pending", expected={"awaiting_customer"})

@@ -13,3 +13,7 @@ stage2_hybrid/store/
 .git/
 run.bat
 stop.bat
+data/followups.db
+
+# Cloudflare Worker (not part of the container)
+cloudflare/

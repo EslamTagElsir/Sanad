@@ -70,6 +70,8 @@ def isolated_state(users_file, monkeypatch, tmp_path):
     monkeypatch.setattr(service, "DEV_OPEN", False)
     service._draft_cache.clear()
     monkeypatch.setattr(ticket_store, "DB_PATH", tmp_path / "tickets.db")   # قاعدة تذاكر نظيفة لكل اختبار
+    monkeypatch.setattr(ticket_store, "FOLLOWUP_DB_PATH", tmp_path / "followups.db")
+    monkeypatch.setattr(ticket_store, "D1_URL", "")
     auth._failed_logins.clear()
     yield
 

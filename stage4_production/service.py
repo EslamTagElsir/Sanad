@@ -433,14 +433,15 @@ def resolve_ticket(ticket_id: str, req: ResolveRequest, employee: dict = Depends
             )
         # لا تتغير الحالة إلا لو الإيميل اتبعت فعلًا؛ فشل الإرسال يبقيها "pending"
         # حتى لا تختفي من قائمة المتابعة رغم أن العميل لم يستلم شيئًا.
-        if email_sent:
-            kind = "clarification" if req.resolution == "clarify" else "message"
-            ticket_store.add_message(ticket_id, "agent", req.final_text, kind)
-            ticket_store.set_status(ticket_id, "awaiting_customer" if req.resolution == "clarify" else "sent")
+        # الأسئلة التوضيحية تنقل التذكرة للتخزين الدائم (العميل قد يرد بعد ساعات)؛
+        # الرد النهائي يغلقها (وتُحذف من التخزين الدائم إن كانت فيه).
+        if email_sent and req.resolution == "clarify":
+            ticket = ticket_store.start_follow_up(ticket_id, req.final_text)
+        elif email_sent:
+            ticket = ticket_store.close_ticket(ticket_id, "sent", req.final_text)
     else:
-        ticket_store.set_status(ticket_id, "escalated")
+        ticket = ticket_store.close_ticket(ticket_id, "escalated")
 
-    ticket = ticket_store.get_ticket(ticket_id)
     logger.info(
         f"TICKET RESOLVED | id={ticket_id} | by={employee.get('display_name')} | "
         f"resolution={req.resolution} | email_sent={email_sent}" + (f" | error={email_error}" if email_error else "")
