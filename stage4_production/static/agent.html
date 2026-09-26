@@ -164,8 +164,29 @@ function authHeaders(extra) {
   return Object.assign({ 'Authorization': 'Bearer ' + token }, extra || {});
 }
 
+// Cloudflare (بدون حاويات): أول استخدام يجهّز فهرس البحث على خطوات صغيرة (POST /admin/init)
+// ثم يُعاد الطلب تلقائيًا. النسخة المحلية/Docker لا تُرجع 503 هنا فلا يتأثر عملها.
+async function prepareIndex() {
+  const btn = document.getElementById('generateBtn');
+  for (let i = 0; i < 60; i++) {
+    const r = await fetch('/admin/init', { method: 'POST', headers: authHeaders() });
+    if (!r.ok) throw new Error('تعذّر تجهيز فهرس البحث');
+    const p = await r.json();
+    if (btn) btn.innerHTML = '<span class="spin"></span> تجهيز الفهرس لأول مرة (' + p.stage + ' ' + p.done + '/' + p.total + ')...';
+    if (p.ready) return;
+  }
+  throw new Error('تجهيز الفهرس استغرق وقتًا أطول من المتوقع، حاول مرة أخرى');
+}
+
 async function api(path, options) {
-  const resp = await fetch(path, options);
+  let resp = await fetch(path, options);
+  if (resp.status === 503 && path === '/draft') {
+    const body = await resp.clone().json().catch(() => ({}));
+    if (body.init_pending) {
+      await prepareIndex();
+      resp = await fetch(path, options);
+    }
+  }
   if (resp.status === 401) {
     logout();
     throw new Error('انتهت الجلسة، سجّل الدخول تاني');
