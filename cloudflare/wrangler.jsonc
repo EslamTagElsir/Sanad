@@ -21,8 +21,7 @@
 		{
 			"binding": "DB",
 			"database_name": "sanad-followups",
-			// Replace with the id printed by: npx wrangler d1 create sanad-followups
-			"database_id": "REPLACE_WITH_D1_DATABASE_ID",
+			"database_id": "478e6f32-c73e-4d3a-9136-8eb92d0d31eb",
 			"migrations_dir": "migrations"
 		}
 	],
@@ -30,8 +29,8 @@
 		// Public address customers open from the clarification email.
 		"SANAD_PUBLIC_URL": "https://sanad.REPLACE_WITH_SUBDOMAIN.workers.dev",
 		"OPENROUTER_MODELS": "inclusionai/ling-3.0-flash-fin:free"
-	},
-	"secrets": {
-		"required": ["OPENROUTER_API_KEY", "SANAD_JWT_SECRET", "SANAD_USERS_JSON"]
 	}
+	// Secrets (set in the dashboard or with `wrangler secret put`, never here):
+	// OPENROUTER_API_KEY, SANAD_JWT_SECRET, SANAD_USERS_JSON, and optionally
+	// SENDGRID_API_KEY / SENDGRID_FROM_EMAIL.
 }
