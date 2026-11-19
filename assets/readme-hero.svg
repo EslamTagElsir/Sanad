@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+<title id="title">Sanad · سند — project banner</title><desc id="desc">Grounded support drafts in Arabic, Egyptian Arabic, and English.</desc>
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B1220"/><stop offset="1" stop-color="#18263A"/></linearGradient><linearGradient id="glow" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2DD4BF" stop-opacity=".28"/><stop offset="1" stop-color="#A7F3D0" stop-opacity=".04"/></linearGradient><pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0V28" fill="none" stroke="#CBD5E1" stroke-opacity=".07"/></pattern></defs>
+<rect width="1280" height="360" rx="24" fill="url(#bg)"/><rect width="1280" height="360" rx="24" fill="url(#grid)"/><ellipse cx="370" cy="60" rx="600" ry="280" fill="url(#glow)"/>
+<rect x="0" y="0" width="9" height="360" rx="4" fill="#2DD4BF"/>
+<rect x="88" y="48" width="12" height="12" rx="6" fill="#A7F3D0"/><text x="114" y="60" fill="#A7F3D0" font-size="16" font-family="Inter,Segoe UI,Arial" font-weight="700" letter-spacing="2">BILINGUAL AGENT-ASSIST COPILOT</text>
+<text x="88" y="145" fill="#F8FAFC" font-size="58" font-weight="750" font-family="Inter,Segoe UI,Arial">Sanad · سند</text>
+<text x="88" y="194" fill="#CBD5E1" font-size="21" font-family="Inter,Segoe UI,Arial">Grounded support drafts in Arabic, Egyptian Arabic, and English.</text>
+<rect x="88" y="283" width="174" height="34" rx="17" fill="#FFFFFF" fill-opacity=".08" stroke="#FFFFFF" stroke-opacity=".18"/><text x="175" y="305" text-anchor="middle" fill="#E2E8F0" font-size="14" font-family="Inter,Segoe UI,Arial">Multilingual RAG</text><rect x="276" y="283" width="176" height="34" rx="17" fill="#FFFFFF" fill-opacity=".08" stroke="#FFFFFF" stroke-opacity=".18"/><text x="364" y="305" text-anchor="middle" fill="#E2E8F0" font-size="14" font-family="Inter,Segoe UI,Arial">Confidence Routing</text><rect x="464" y="283" width="176" height="34" rx="17" fill="#FFFFFF" fill-opacity=".08" stroke="#FFFFFF" stroke-opacity=".18"/><text x="552" y="305" text-anchor="middle" fill="#E2E8F0" font-size="14" font-family="Inter,Segoe UI,Arial">Human-in-the-loop</text><g transform="translate(950 55)">
+      <circle cx="130" cy="125" r="112" fill="#2DD4BF" opacity=".10"/>
+      <path d="M130 24 L225 58 V128 C225 190 180 235 130 258 C80 235 35 190 35 128 V58 Z" fill="#FFFFFF" fill-opacity=".08" stroke="#2DD4BF" stroke-width="4"/>
+      <path d="M85 128 L116 159 L178 92" fill="none" stroke="#A7F3D0" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="240" cy="54" r="14" fill="#A7F3D0"/><circle cx="28" cy="215" r="9" fill="#2DD4BF"/>
+      <text x="130" y="294" text-anchor="middle" fill="#E2E8F0" font-size="16" font-family="Inter,Segoe UI,Arial">HUMAN-REVIEWED AI</text>
+    </g>
+</svg>
