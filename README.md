@@ -1,8 +1,22 @@
+<div align="center">
+
+<img src="assets/readme-hero.svg" alt="Sanad bilingual support copilot banner" width="100%">
+
 # Sanad · سند
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white) ![RAG](https://img.shields.io/badge/Architecture-RAG-0F766E) ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white) ![License](https://img.shields.io/badge/License-AGPL--3.0-64748B)
+
+</div>
 
 **مساعد موظف الدعم لمحفظة إلكترونية** — يقرأ رسالة العميل (فصحى، عامية مصرية، أو إنجليزي)، يبحث في قاعدة المعرفة ودليل سياسات الشركة والتذاكر السابقة، ويكتب **مسودة رد** يراجعها موظف بشري قبل الإرسال. لا يصل أي شيء للعميل بدون مراجعة الموظف.
 
 An agent-assist copilot for e-wallet customer support: retrieval-augmented reply drafts in Arabic (incl. Egyptian dialect) and English, with calibrated confidence and a human always in the loop.
+
+## System at a glance
+
+<p align="center"><img src="assets/architecture.svg" alt="Sanad retrieval and human-review architecture" width="100%"></p>
+
+> **Human-in-the-loop by design:** the system prepares a draft or escalation context; an employee reviews the result before anything is sent to a customer.
 
 ## المميزات
 
